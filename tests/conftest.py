@@ -17,3 +17,15 @@ def judilibre_doc():
 @pytest.fixture
 def legifrance_doc():
     return load_pdf(SAMPLES / "cass_civ3_2022-12-14_21-24539.pdf")
+
+
+@pytest.fixture
+def registry(legifrance_doc):
+    import asyncio
+
+    from fakes import ZoneJev
+    from lawhack.attributor import build_registry
+    from lawhack.segmenter import segment
+    from lawhack.zoning import zone_blocks
+
+    return asyncio.run(build_registry("doc", segment(zone_blocks(legifrance_doc)), ZoneJev()))

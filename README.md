@@ -346,6 +346,26 @@ ANSWER_MODEL=mistral-medium-3-5
 BASELINE_MODEL=openai/gpt-6-astra
 ```
 
+### Système 2 : paramètres et commandes
+
+Tous les paramètres sont lus depuis `.env` par `lawhack/config.py` (`Settings.from_env()`) :
+fournisseur et modèle de réponse (`ANSWER_PROVIDER`, `ANSWER_MODEL`), modèle de référence
+(`BASELINE_PROVIDER`, `BASELINE_MODEL`), seuils de la politique d'honnêteté (`CONFIDENCE_HIGH`,
+`CONFIDENCE_LOW`, `SUPPORT_MIN`, `ANSWERABLE_MIN`, `ROUTE_ABSTAIN`, `RELEVANCE_MIN`) et `RETRIEVAL_TOP_K`.
+Voir `.env.example`.
+
+```bash
+python scripts/ask.py arret.pdf "Que décide la Cour sur le montant du prêt ?" --baseline
+python scripts/ask.py arret.pdf --verify "La Cour juge que l'indemnité est due."
+uvicorn server.api:app --reload   # POST /load (PDF), POST /ask, POST /verify, GET /registry/{id}
+```
+
+Modules : `retrieval.py` (BM25 + dispositif) → `routing.py` (Jev : nature de la question,
+réponse présente, pertinence) → `answer.py` (Mistral, JSON, citations `[S-xx]`) →
+`verify.py` (Jev : soutien de chaque affirmation, puis politique d'honnêteté en code) ;
+orchestration dans `system_two.py`. Pastilles : `OK`, `A_VERIFIER`, `NON_TRANCHE`,
+`MAL_ATTRIBUE`, `NON_SOUTENU`.
+
 ## 11. Démo (≈ 3 minutes)
 
 1. Le problème en une phrase + un exemple réel d'erreur d'attribution.
