@@ -80,6 +80,14 @@ def test_lower_court_quoted_in_a_moyen_is_to_be_checked(registry):
     assert claim.badge is Badge.A_VERIFIER and "arrêt attaqué" in claim.note
 
 
+def test_lower_court_reasoning_approved_by_the_cour_is_ok(registry):
+    s9 = seg(registry, 9)
+    chat = FakeChat(json.dumps({"status": "ANSWER", "claims": [
+        {"text": "La cour d'appel a retenu que le montant maximal n'obligeait pas les acquéreurs.", "segments": [s9.id],
+         "claimed_speaker": "JURIDICTION_FOND"}]}))
+    assert run("Qu'a retenu la cour d'appel ?", registry, answering_jev(), chat).claims[0].badge is Badge.OK
+
+
 def test_jev_gets_one_question_per_call(registry):
     jev = answering_jev()
     chat = FakeChat(json.dumps({"status": "ANSWER", "claims": [

@@ -145,10 +145,10 @@ async def build_registry(document_id: str, segments: list[Segment], client: Syst
             status = decisions[f"status:{s.id}"]
             chain = _chain(Speaker(speaker.value))
             if s.zone is Zone.MOTIVATIONS and APPROVAL_MARKERS.search(s.text):
+                # "Elle a retenu à bon droit…": the Cour endorses the lower court's reasoning, both hold it.
                 status = _certain(Status.DECIDE.value)
-                if speaker.value != Speaker.COUR_CASSATION.value:
-                    chain = [Speaker.COUR_CASSATION, Speaker(speaker.value)]
-                    speaker = _certain(Speaker.COUR_CASSATION.value)
+                chain = [Speaker.COUR_CASSATION, Speaker.JURIDICTION_FOND]
+                speaker = _certain(Speaker.COUR_CASSATION.value)
             entries[s.id] = RegistryEntry(
                 **s.model_dump(), speaker=speaker, type=decisions[f"type:{s.id}"], status=status,
                 chain=chain, source="jev",

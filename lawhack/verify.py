@@ -25,6 +25,12 @@ def _where(e: RegistryEntry) -> str:
     return f"§{e.paragraph}" if e.paragraph else ZONE_LABELS[e.zone]
 
 
+def _holders(e: RegistryEntry) -> list[Speaker]:
+    """The speaker and whoever it reports with approval (later in the chain); not the reporter itself."""
+    speaker = Speaker(e.speaker.value)
+    return [speaker] + (e.chain[e.chain.index(speaker) + 1:] if speaker in e.chain else [])
+
+
 def judge(claim: Claim, cited: list[RegistryEntry], support: float | None, settings: Settings) -> CheckedClaim:
     """Deterministic honesty policy: the code, not a model, decides what to do with the confidence."""
     base = claim.model_dump()
@@ -34,7 +40,7 @@ def judge(claim: Claim, cited: list[RegistryEntry], support: float | None, setti
     primary = max(cited, key=lambda e: e.speaker.confidence)
     actual = Speaker(primary.speaker.value)
     confidence = min(e.speaker.confidence for e in cited)
-    speakers = {e.speaker.value for e in cited}
+    speakers = {s.value for e in cited for s in _holders(e)}
     out = dict(base, citations=[citation(e) for e in cited], actual_speaker=actual, confidence=confidence, support=support)
 
     only_argued = all(e.zone is Zone.MOYENS or e.status.value == Status.ALLEGUE.value for e in cited)
