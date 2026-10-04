@@ -1,6 +1,7 @@
 """System 2: retrieve registry segments with Jev, draft a cited answer with Mistral, verify with Jev."""
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -21,10 +22,12 @@ MIN_PARAGRAPH_P = 0.05
 COVER = 0.9
 PARAGRAPH_CHARS = 1500
 NONE = "NONE"
-LEXICAL_RESCUE = 0.6
 TARGET_ANY = "ANY"
 TARGET_MIN = 0.6
 MAX_PINNED = 3
+LEXICAL_RESCUE = 0.6
+
+log = logging.getLogger(__name__)
 
 SPEAKER_LABELS = {
     "COUR_CASSATION": "Cour",
@@ -68,6 +71,7 @@ class AnswerSentence(BaseModel):
     text: str
     pills: list[Pill]
     supported: float  # Jev probability that the cited segments support this sentence as attributed
+    revised_from: str | None = None  # original Mistral wording when a flagged sentence was rewritten
 
 
 class Answer(BaseModel):
@@ -132,15 +136,10 @@ async def retrieve(registry: Registry, question: str, client: SystemOneClient) -
         client.decide({"question": question}, {"target": _target_choice()}),
         _vote(state, keys, client),
     )
-    if all(max(v, key=v.get) == NONE for v in votes):
-        # A question naming the wrong speaker (« la Cour a-t-elle constaté… ») can hide the passage: retry on its substance.
-        state = {**state, "question": strip_cues(question)}
-        votes = await _vote(state, keys, client)
     target_probabilities = target_result.decisions["target"].probabilities
     top_target = max(target_probabilities, key=target_probabilities.get)
-    target_probability = target_probabilities[top_target]
     pinned: list[RegistryEntry] = []
-    if top_target in _PARTIES and target_probability >= TARGET_MIN:
+    if top_target in _PARTIES and target_probabilities[top_target] >= TARGET_MIN:
         target_blocks = [
             group for group in paragraphs.values()
             if any(e.zone is Zone.MOYENS and e.speaker.value == top_target for e in group)
@@ -149,17 +148,20 @@ async def retrieve(registry: Registry, question: str, client: SystemOneClient) -
         for group in (non_annexed or target_blocks)[:MAX_PINNED]:
             pinned.extend(group)
 
-    abstained = all(max(v, key=v.get) == NONE for v in votes)
-    if abstained:
+    def none_everywhere() -> bool:
+        return all(max(v, key=v.get) == NONE for v in votes)
+
+    if none_everywhere() and not pinned:
+        # A question naming the wrong speaker (« la Cour a-t-elle constaté… ») can hide the passage: retry on its substance.
+        state = {**state, "question": strip_cues(question)}
+        votes = await _vote(state, keys, client)
+    if none_everywhere() and not pinned:
         rescued = _lexical_match(paragraphs, strip_cues(question))
         if rescued is None:
-            if not pinned:
-                return []
-        else:
-            votes = [{rescued: 1.0}]
-            abstained = False
+            return []
+        votes = [{rescued: 1.0}]
     picked: dict[str, RegistryEntry] = {e.id: e for e in pinned}
-    if not abstained:
+    if not none_everywhere():
         averaged = {k: sum(v.get(k, 0.0) for v in votes) / len(votes) for k in keys if k != NONE}
         ranked = sorted(averaged.items(), key=lambda t: -t[1])
         cumulative = 0.0
@@ -259,15 +261,35 @@ Règles impératives :
 
 
 def draft(question: str, context: list[RegistryEntry], model: str | None = None) -> str:
+    excerpts = "\n\n".join(_describe(e) for e in sorted(context, key=lambda e: e.id))
+    return _complete([
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Extraits :\n\n{excerpts}\n\nQuestion : {question}"},
+    ], model)
+
+
+REVISE_PROMPT = """Tu corriges UNE phrase d'une réponse juridique que la vérification a jugée non soutenue par ses passages cités.
+Réécris-la pour qu'elle ne dise QUE ce que les passages établissent, attribuée à leur vrai locuteur
+(« la cour d'appel a relevé », « la Cour juge », « le demandeur soutient »). N'ajoute aucun fait, ne transforme pas
+une offre, une demande ou une allégation en fait accompli. Termine la phrase par les mêmes identifiants [S-xxx].
+Si aucune formulation fidèle n'est possible, réponds exactement : SUPPRIMER"""
+DROP = "SUPPRIMER"
+MAX_REVISIONS = 3
+
+
+def revise(sentence: str, cited: list[RegistryEntry], model: str | None = None) -> str:
+    excerpts = "\n\n".join(_describe(e) for e in cited)
+    return _complete([
+        {"role": "system", "content": REVISE_PROMPT},
+        {"role": "user", "content": f"Passages cités :\n\n{excerpts}\n\nPhrase à corriger : {sentence}"},
+    ], model)
+
+
+def _complete(messages: list[dict], model: str | None) -> str:
     from mistralai.client import Mistral
     from mistralai.client.errors import SDKError
 
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-    excerpts = "\n\n".join(_describe(e) for e in sorted(context, key=lambda e: e.id))
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Extraits :\n\n{excerpts}\n\nQuestion : {question}"},
-    ]
     for attempt in range(5):
         try:
             response = client.chat.complete(
@@ -339,4 +361,46 @@ async def ask(registry: Registry, question: str, client: SystemOneClient, model:
     text = await asyncio.to_thread(draft, question, context, model)
     if text.strip().startswith(NOT_ADDRESSED):
         return Answer(question=question, sentences=[], abstained=True)
-    return Answer(question=question, sentences=await verify(text, registry, client))
+    sentences = await _repair(await verify(text, registry, client), registry, client, model)
+    if not sentences:
+        return Answer(question=question, sentences=[], abstained=True)
+    return Answer(question=question, sentences=sentences)
+
+
+def _flagged(s: AnswerSentence) -> bool:
+    return bool(s.pills) and any(p.level != "ok" for p in s.pills)
+
+
+async def _repair(
+    sentences: list[AnswerSentence], registry: Registry, client: SystemOneClient, model: str | None
+) -> list[AnswerSentence]:
+    """Rewrite flagged sentences from their cited passages only; keep a rewrite only if Jev supports it better."""
+    targets = [i for i, s in enumerate(sentences) if _flagged(s)][:MAX_REVISIONS]
+    if not targets:
+        return sentences
+
+    async def fix(i: int) -> AnswerSentence | None:
+        s = sentences[i]
+        cited = [registry.by_id(p.segment_id) for p in s.pills]
+        allowed = {c.id for c in cited}
+        tags = " ".join(f"[{c.id}]" for c in cited)
+        try:  # a failed rewrite or re-check must not lose the verified draft
+            rewritten = (await asyncio.to_thread(revise, f"{s.text} {tags}", cited, model)).strip()
+            if rewritten.startswith(DROP):
+                return None
+            ids = set(_CITE.findall(rewritten))
+            if not ids:
+                rewritten = f"{rewritten} {tags}"
+            elif not ids <= allowed:
+                return s
+            checked = await verify(rewritten, registry, client)
+        except Exception as error:
+            log.warning("Reformulation impossible (%s) : phrase conservée avec son avertissement.", error)
+            return s
+        if len(checked) != 1 or checked[0].supported <= s.supported:
+            return s
+        return checked[0].model_copy(update={"revised_from": s.text})
+
+    fixed = dict(zip(targets, await asyncio.gather(*(fix(i) for i in targets))))
+    out = [fixed[i] if i in fixed else s for i, s in enumerate(sentences)]
+    return [s for s in out if s is not None]
