@@ -28,7 +28,9 @@ async def ask(question: str, registry: Registry, system_one: SystemOneClient, ch
         return answer
 
     off_topic = routing.route.value == Route.NOT_IN_DECISION and routing.route.confidence >= settings.route_abstain
-    if off_topic or routing.answerable < settings.answerable_min or not routing.relevant:
+    # Jev's answerable check over many segments is pessimistic: trust it only if the route is not clearly in the decision.
+    in_decision = routing.route.value != Route.NOT_IN_DECISION and routing.route.confidence >= settings.route_abstain
+    if off_topic or not routing.relevant or (routing.answerable < settings.answerable_min and not in_decision):
         # Abstain before calling Système 2: nothing to cite, so nothing to say.
         return done(Answer(question=question, status=AnswerStatus.HORS_ARRET, message=NOT_ADDRESSED,
                            route=routing.route, input_tokens=tokens))

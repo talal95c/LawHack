@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from lawhack.config import Settings
+from lawhack.ingest import NoTextError
 from lawhack.llm import answer_client, baseline_client
 from lawhack.pipeline import analyse, load
 from lawhack.schema import Answer, CheckedClaim, Registry
@@ -63,8 +64,15 @@ def load_decision(file: UploadFile) -> Loaded:
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         tmp.write(file.file.read())
         tmp.flush()
-        doc = load(tmp.name)
+        try:
+            doc = load(tmp.name)
+        except NoTextError as e:
+            raise HTTPException(422, str(e))
+    if not doc.text.strip():
+        raise HTTPException(422, "Aucun texte lisible dans ce PDF.")
     registry, solution = analyse(doc)
+    if not registry.entries:
+        raise HTTPException(422, "Aucun paragraphe d'arrêt reconnu dans ce document.")
     _store[doc.id] = (doc.text, registry, solution)
     return Loaded(document_id=doc.id, solution=solution, segments=len(registry.entries),
                   seconds=registry.seconds, input_tokens=registry.input_tokens)

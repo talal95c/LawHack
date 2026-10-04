@@ -44,6 +44,7 @@ APPROVAL_MARKERS = re.compile(
     r"|n'est (donc )?pas fondé|ne peut (donc )?être accueilli|est (donc )?fondé",
     re.I,
 )
+_GRIEF = re.compile(r"\bfai(t|sait) grief à l'arr[êe]t\b", re.I)
 _VISA = re.compile(r"^vu (les?|l')\s*(articles?|principe)", re.I)
 
 
@@ -52,6 +53,9 @@ def _rule(segment: Segment) -> tuple[Speaker, StatementType, Status] | None:
         return Speaker.COUR_CASSATION, StatementType.PROCEDURE, Status.CONSTATE
     if segment.zone is Zone.DISPOSITIF:
         return Speaker.COUR_CASSATION, StatementType.DISPOSITIF, Status.DECIDE
+    if segment.zone is Zone.MOYENS and _GRIEF.search(segment.text):
+        # Only the petitioner "fait grief à l'arrêt" in a Cour de cassation decision.
+        return Speaker.DEMANDEUR, StatementType.MOYEN, Status.ALLEGUE
     if segment.zone is Zone.METADONNEES:
         return Speaker.INDETERMINE, StatementType.PROCEDURE, Status.CONSTATE
     if _VISA.match(segment.text):
