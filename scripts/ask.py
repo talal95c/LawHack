@@ -31,21 +31,24 @@ def main() -> None:
     settings = Settings.from_env()
     doc = load(args.decision)
     registry, solution = analyse(doc)
-    jev = TypeSafeSystemOne()
+    asyncio.run(run(args, settings, doc, registry, solution))
+
+
+async def run(args, settings, doc, registry, solution) -> None:
+    jev = TypeSafeSystemOne()  # async client: one per event loop
     if args.question:
-        answer = asyncio.run(ask(args.question, registry, jev, answer_client(settings), settings, solution.value))
+        answer = await ask(args.question, registry, jev, answer_client(settings), settings, solution.value)
         print(f"LawHack [{answer.status.value} · {answer.seconds}s · {answer.input_tokens} tokens]")
         if answer.message:
             print(f"  {answer.message}")
         show(answer.claims)
         if args.baseline:
-            base = asyncio.run(ask_baseline(args.question, doc.text, baseline_client(settings)))
+            base = await ask_baseline(args.question, doc.text, baseline_client(settings))
             print(f"\nRéférence ({base.model}) :\n  {base.text}\nVérification :")
-            show(asyncio.run(verify_text(base.text, registry, jev, settings))[0])
+            show((await verify_text(base.text, registry, jev, settings))[0])
     if args.verify:
         print("Vérification :")
-        show(asyncio.run(verify_text(args.verify, registry, jev, settings))[0])
-
+        show((await verify_text(args.verify, registry, jev, settings))[0])
 
 if __name__ == "__main__":
     main()

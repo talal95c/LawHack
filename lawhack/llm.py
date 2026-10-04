@@ -3,6 +3,8 @@
 import asyncio
 import json
 import os
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
@@ -31,7 +33,17 @@ class OpenAICompatibleChat:
             raise RuntimeError(f"{key_env} manquant : renseignez-le dans .env")
         self.model, self.temperature, self.timeout = model, temperature, timeout
 
-    def _post(self, payload: dict) -> dict:
+    def _post(self, payload: dict, retries: int = 4) -> dict:
+        for attempt in range(retries + 1):
+            try:
+                return self._send(payload)
+            except urllib.error.HTTPError as e:
+                if e.code not in (429, 500, 502, 503) or attempt == retries:
+                    raise
+                time.sleep(float(e.headers.get("Retry-After") or 2**attempt))
+        raise AssertionError("unreachable")
+
+    def _send(self, payload: dict) -> dict:
         req = urllib.request.Request(
             self.url,
             data=json.dumps(payload).encode(),

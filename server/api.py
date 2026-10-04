@@ -76,14 +76,18 @@ def get_registry(document_id: str) -> Registry:
 def ask_question(req: AskRequest) -> AskResponse:
     text, registry, solution = _get(req.document_id)
     settings = Settings.from_env()
-    jev = TypeSafeSystemOne()
-    answer = asyncio.run(ask(req.question, registry, jev, answer_client(settings), settings, solution.value))
-    out = AskResponse(answer=answer, text=answer.render())
-    if req.baseline:
-        base = asyncio.run(ask_baseline(req.question, text, baseline_client(settings)))
-        out.baseline = base.text
-        out.baseline_check, _ = asyncio.run(verify_text(base.text, registry, jev, settings))
-    return out
+
+    async def run() -> AskResponse:
+        jev = TypeSafeSystemOne()  # async client: one per event loop
+        answer = await ask(req.question, registry, jev, answer_client(settings), settings, solution.value)
+        out = AskResponse(answer=answer, text=answer.render())
+        if req.baseline:
+            base = await ask_baseline(req.question, text, baseline_client(settings))
+            out.baseline = base.text
+            out.baseline_check, _ = await verify_text(base.text, registry, jev, settings)
+        return out
+
+    return asyncio.run(run())
 
 
 @app.post("/verify", response_model=list[CheckedClaim])

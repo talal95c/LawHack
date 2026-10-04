@@ -80,17 +80,19 @@ async def verify_text(text: str, registry: Registry, client: SystemOneClient, se
         if not hits:
             return judge(Claim(text=sentence), [], None, settings), 0
         state = {"sentence": sentence, "segments": {e.id: e.text for e in hits}}
-        sources = {e.id: f"Segment `segments.{e.id}` supports the content of `sentence`" for e in hits}
-        sources[NO_SOURCE] = "No segment supports the content of `sentence`"
-        result = await client.decide(state, {
-            "source": Choice(instructions="Which segment supports the content of `sentence`?", criteria=sources),
-            "claimed": Choice(instructions="Who does `sentence` present as the author of the statement or decision?",
-                              criteria=SPEAKER_CRITERIA),
-        })
-        source, claimed = result.decisions["source"], result.decisions["claimed"]
+        sources = {e.id: f"Segment `segments.{e.id}` states or reports the content of `sentence`" for e in hits}
+        sources[NO_SOURCE] = "No segment states or reports the content of `sentence`"
+        # Two separate calls: on OpenJev, a second question in the same call shifts the source answer.
+        found, attributed = await asyncio.gather(
+            client.decide(state, {"source": Choice(
+                instructions="Which segment states or reports the content of `sentence`, whoever says it?", criteria=sources)}),
+            client.decide({"sentence": sentence}, {"claimed": Choice(
+                instructions="Who does `sentence` present as the author of the statement or decision?", criteria=SPEAKER_CRITERIA)}),
+        )
+        source, claimed = found.decisions["source"], attributed.decisions["claimed"]
         cited = [registry.by_id(source.value)] if source.value != NO_SOURCE else []
         claim = Claim(text=sentence, segments=[e.id for e in cited], claimed_speaker=Speaker(claimed.value))
-        return judge(claim, cited, source.confidence if cited else None, settings), result.input_tokens
+        return judge(claim, cited, source.confidence if cited else None, settings), found.input_tokens + attributed.input_tokens
 
     results = await asyncio.gather(*(one(s) for s in sentences))
     return [c for c, _ in results], sum(t for _, t in results)
