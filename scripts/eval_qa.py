@@ -242,10 +242,10 @@ def summarise(rows: list[dict], system: str) -> dict:
             r["lawhack"].get("abstain_stage")
             for r in rows
             if r["system"] == "lawhack" and r.get("lawhack", {}).get("abstained")
-            and r["lawhack"].get("abstain_stage") in {"retrieval", "draft"}
+            and r["lawhack"].get("abstain_stage") in {"retrieval", "draft", "verify"}
         )
         summary["abstentions_by_stage"] = {
-            stage: abstentions_by_stage[stage] for stage in ("retrieval", "draft")
+            stage: abstentions_by_stage[stage] for stage in ("retrieval", "draft", "verify")
         }
         with_answers = [r for r in answerable if "lawhack" in r and not r["lawhack"]["abstained"]]
         sentences = [(r, sentence) for r in with_answers for sentence in r["lawhack"]["sentences"]]
@@ -587,7 +587,10 @@ async def main() -> None:
               f"{metrics['seconds_mean']:.1f}s")
         if system == "lawhack":
             stages = metrics["abstentions_by_stage"]
-            print(f"  abstentions LawHack : retrieval={stages['retrieval']}, draft={stages['draft']}")
+            print(
+                f"  abstentions LawHack : retrieval={stages['retrieval']}, "
+                f"draft={stages['draft']}, verify={stages['verify']}"
+            )
     if "baseline" in summary:
         print(f"vérificateur LawHack sur la baseline : "
               f"{summary['baseline']['verifier_flags_baseline_errors']['rate']:.0%} des hallucinations signalées, "
