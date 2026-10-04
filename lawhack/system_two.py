@@ -9,7 +9,7 @@ from lawhack.retrieval import pinned, retrieve
 from lawhack.routing import Route, route_question
 from lawhack.schema import Answer, AnswerStatus, Badge, Registry
 from lawhack.system_one import SystemOneClient
-from lawhack.verify import check_claims
+from lawhack.claim_check import check_claims
 
 NOT_ADDRESSED = "L'arrêt ne traite pas cette question."
 

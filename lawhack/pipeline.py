@@ -1,7 +1,9 @@
 import asyncio
+import os
 from pathlib import Path
 
-from lawhack.attributor import build_registry
+from lawhack.attributor import VERSION, build_registry
+from lawhack.heuristic import HeuristicSystemOne
 from lawhack.ingest import load_pdf, load_text
 from lawhack.schema import Document, Registry, Zone
 from lawhack.segmenter import segment
@@ -19,13 +21,33 @@ def load(path: str | Path) -> Document:
     return load_text(path.read_text())
 
 
+def default_client() -> SystemOneClient:
+    """Jev/OpenJev when a key is configured, otherwise the offline heuristic."""
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return TypeSafeSystemOne()
+    return HeuristicSystemOne()
+
+
+def is_current(registry: Registry, client: SystemOneClient) -> bool:
+    """A cached registry is reusable unless the rules changed or Jev became available since."""
+    upgraded = registry.model == HeuristicSystemOne.model and not isinstance(client, HeuristicSystemOne)
+    return registry.version == VERSION and not upgraded
+
+
 def analyse(doc: Document, client: SystemOneClient | None = None, use_cache: bool = True) -> tuple[Registry, Solution]:
+    return asyncio.run(analyse_async(doc, client, use_cache))
+
+
+async def analyse_async(doc: Document, client: SystemOneClient | None = None, use_cache: bool = True) -> tuple[Registry, Solution]:
     blocks = zone_blocks(doc)
     solution = detect_solution(" ".join(b.text for b in blocks if b.zone is Zone.DISPOSITIF))
+    client = client or default_client()
     cached = CACHE_DIR / f"{doc.id}.json"
     if use_cache and cached.exists():
-        return Registry.model_validate_json(cached.read_text()), solution
-    registry = asyncio.run(build_registry(doc.id, segment(blocks), client or TypeSafeSystemOne()))
+        registry = Registry.model_validate_json(cached.read_text())
+        if is_current(registry, client):
+            return registry, solution
+    registry = await build_registry(doc.id, segment(blocks), client)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached.write_text(registry.model_dump_json(indent=2))
     return registry, solution

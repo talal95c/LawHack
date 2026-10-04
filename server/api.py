@@ -17,10 +17,12 @@ from lawhack.schema import Answer, CheckedClaim, Registry
 from lawhack.solution import Solution
 from lawhack.system_one import TypeSafeSystemOne
 from lawhack.system_two import ask, ask_baseline
-from lawhack.verify import verify_text
+from server.rest import router
+from lawhack.claim_check import verify_text
 
 load_dotenv()
 app = FastAPI(title="LawHack")
+app.include_router(router)  # connector REST façade under /api
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLES = ROOT / "data" / "samples"
 _store: dict[str, tuple[str, Registry, Solution]] = {}

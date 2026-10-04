@@ -7,7 +7,7 @@ from lawhack.config import Settings
 from lawhack.retrieval import retrieve
 from lawhack.schema import AnswerStatus, Badge, Speaker
 from lawhack.system_two import ask
-from lawhack.verify import verify_text
+from lawhack.claim_check import verify_text
 
 SETTINGS = Settings()
 

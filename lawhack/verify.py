@@ -1,107 +1,96 @@
-"""Step 9: check each claim against the registry with Jev, then apply the honesty policy (README §7)."""
+"""Check who a drafted text says is speaking against the attribution registry."""
 
-import asyncio
+import re
+from enum import Enum
 
-from typesafe_sdk import Choice, Noul
-
-from lawhack.attributor import SPEAKER_CRITERIA
-from lawhack.config import Settings
-from lawhack.retrieval import BM25Index
-from lawhack.schema import (
-    SPEAKER_LABELS, ZONE_LABELS, Badge, CheckedClaim, Citation, Claim, Registry, RegistryEntry, Speaker, Status, Zone,
-)
+from lawhack.retrieval import BM25, coverage
+from lawhack.schema import Registry, RegistryEntry, Speaker, Zone
 from lawhack.segmenter import split_sentences
-from lawhack.system_one import SystemOneClient
 
-NO_SOURCE = "NONE"
+SUPPORT_MIN = 0.6  # share of a claim's content words found in its best segment
 
-
-def citation(e: RegistryEntry) -> Citation:
-    label = f"§{e.paragraph}, {e.heading or ZONE_LABELS[e.zone]}" if e.paragraph else (e.heading or ZONE_LABELS[e.zone])
-    return Citation(segment_id=e.id, paragraph=e.paragraph, zone=e.zone, label=label, speaker=e.speaker)
-
-
-def _where(e: RegistryEntry) -> str:
-    return f"§{e.paragraph}" if e.paragraph else ZONE_LABELS[e.zone]
-
-
-def _holders(e: RegistryEntry) -> list[Speaker]:
-    """The speaker and whoever it reports with approval (later in the chain); not the reporter itself."""
-    speaker = Speaker(e.speaker.value)
-    return [speaker] + (e.chain[e.chain.index(speaker) + 1:] if speaker in e.chain else [])
+# Order matters: "la cour d'appel" must be tested before "la Cour".
+_CLAIM_CUES: list[tuple[re.Pattern[str], Speaker]] = [
+    (re.compile(r"cour d'appel|juges? du fond|l'arr[êe]t (attaqu[ée]|d'appel)|juridiction du fond|premiers? juges?", re.I), Speaker.JURIDICTION_FOND),
+    (re.compile(r"\b(le|la|les) (demandeu?r(esse)?s?|requérant|auteur du pourvoi)\b|\ble moyen\b|fait grief|reproche", re.I), Speaker.DEMANDEUR),
+    (re.compile(r"\b(le|la|les) défendeu?r(esse)?s?\b", re.I), Speaker.DEFENDEUR),
+    (re.compile(r"avocat général|ministère public|parquet", re.I), Speaker.MINISTERE_PUBLIC),
+    (re.compile(r"\b(la )?cour de cassation\b|\bla (haute )?(cour|juridiction)\b(?! d'appel)|\bla chambre\b", re.I), Speaker.COUR_CASSATION),
+    (re.compile(r"\b(l'article|le code|la loi|ce texte)\b", re.I), Speaker.LOI),
+]
 
 
-def judge(claim: Claim, cited: list[RegistryEntry], support: float | None, settings: Settings) -> CheckedClaim:
-    """Deterministic honesty policy: the code, not a model, decides what to do with the confidence."""
-    base = claim.model_dump()
-    if not cited or (support is not None and support < settings.support_min):
-        return CheckedClaim(**base, badge=Badge.NON_SOUTENU, support=support, citations=[citation(e) for e in cited],
-                            note="Aucun passage de l'arrêt ne soutient cette affirmation.")
-    primary = max(cited, key=lambda e: e.speaker.confidence)
-    actual = Speaker(primary.speaker.value)
-    confidence = min(e.speaker.confidence for e in cited)
-    speakers = {s.value for e in cited for s in _holders(e)}
-    out = dict(base, citations=[citation(e) for e in cited], actual_speaker=actual, confidence=confidence, support=support)
-
-    only_argued = all(e.zone is Zone.MOYENS or e.status.value == Status.ALLEGUE.value for e in cited)
-    if claim.claimed_speaker is Speaker.COUR_CASSATION and only_argued:
-        return CheckedClaim(**out, badge=Badge.NON_TRANCHE,
-                            note=f"La Cour ne tranche pas ce point ; c'est l'argument du {SPEAKER_LABELS[actual].lower()} ({_where(primary)}).")
-    if claim.claimed_speaker is Speaker.JURIDICTION_FOND and only_argued:
-        # A moyen quotes the decision under appeal, but only as the party reports it.
-        return CheckedClaim(**out, badge=Badge.A_VERIFIER,
-                            note=f"Rapporté par le {SPEAKER_LABELS[actual].lower()} ({_where(primary)}) : à confirmer dans l'arrêt attaqué.")
-    if claim.claimed_speaker is not Speaker.INDETERMINE and claim.claimed_speaker.value not in speakers:
-        return CheckedClaim(**out, badge=Badge.MAL_ATTRIBUE,
-                            note=f"Attribué à : {SPEAKER_LABELS[claim.claimed_speaker]} — en réalité : {SPEAKER_LABELS[actual]} ({_where(primary)}).")
-    if actual is Speaker.INDETERMINE or confidence < settings.confidence_high:
-        return CheckedClaim(**out, badge=Badge.A_VERIFIER,
-                            note=f"Attribution incertaine ({confidence:.0%}) : probablement {SPEAKER_LABELS[actual]}, à vérifier au {_where(primary)}.")
-    return CheckedClaim(**out, badge=Badge.OK)
+class Verdict(str, Enum):
+    OK = "OK"
+    A_VERIFIER = "A_VERIFIER"
+    MAL_ATTRIBUE = "MAL_ATTRIBUE"
+    NON_SOURCE = "NON_SOURCE"
+    SANS_ATTRIBUTION = "SANS_ATTRIBUTION"
 
 
-async def check_claims(claims: list[Claim], registry: Registry, client: SystemOneClient, settings: Settings) -> tuple[list[CheckedClaim], int]:
-    """Claims drafted by Système 2: Jev checks that the cited segments support each one."""
-    cited = {i: [e for e in map(registry.by_id, c.segments) if e] for i, c in enumerate(claims)}
-    checkable = {i: es for i, es in cited.items() if es}
-    support: dict[int, float] = {}
-    tokens = 0
-
-    async def one(i: int, es: list[RegistryEntry]) -> None:
-        nonlocal tokens
-        state = {"claim": claims[i].text, "segments": {e.id: e.text for e in es}}
-        question = Noul(instructions="Is `claim` directly supported by at least one of `segments`? Ignore who said it; judge the content.")
-        result = await client.decide(state, {"support": question})  # one claim per call, see routing.py
-        tokens += result.input_tokens
-        support[i] = result.decisions["support"].probabilities.get("true", 0.0)
-
-    await asyncio.gather(*(one(i, es) for i, es in checkable.items()))
-    return [judge(c, cited[i], support.get(i), settings) for i, c in enumerate(claims)], tokens
+def claimed_speaker(sentence: str) -> Speaker | None:
+    """First speaker explicitly named in the sentence (the grammatical subject in practice)."""
+    found = [(m.start(), speaker) for pattern, speaker in _CLAIM_CUES if (m := pattern.search(sentence))]
+    return min(found, key=lambda x: x[0])[1] if found else None
 
 
-async def verify_text(text: str, registry: Registry, client: SystemOneClient, settings: Settings) -> tuple[list[CheckedClaim], int]:
-    """Any text about the decision (e.g. Astra's answer): find each sentence's source and who it is attributed to."""
-    index = BM25Index(registry)
-    sentences = [text[s:e].strip() for s, e in split_sentences(text) if text[s:e].strip()]
+def speakers_of(entry: RegistryEntry) -> set[str]:
+    """Voices a claim may legitimately attribute this segment to.
 
-    async def one(sentence: str) -> tuple[CheckedClaim, int]:
-        hits = [e for e, _ in index.search(sentence, settings.top_k)]
-        if not hits:
-            return judge(Claim(text=sentence), [], None, settings), 0
-        state = {"sentence": sentence, "segments": {e.id: e.text for e in hits}}
-        sources = {e.id: f"Segment `segments.{e.id}` states or reports the content of `sentence`" for e in hits}
-        sources[NO_SOURCE] = "No segment states or reports the content of `sentence`"
-        # Two separate calls: on OpenJev, a second question in the same call shifts the source answer.
-        found, attributed = await asyncio.gather(
-            client.decide(state, {"source": Choice(
-                instructions="Which segment states or reports the content of `sentence`, whoever says it?", criteria=sources)}),
-            client.decide({"sentence": sentence}, {"claimed": Choice(
-                instructions="Who does `sentence` present as the author of the statement or decision?", criteria=SPEAKER_CRITERIA)}),
-        )
-        source, claimed = found.decisions["source"], attributed.decisions["claimed"]
-        cited = [registry.by_id(source.value)] if source.value != NO_SOURCE else []
-        claim = Claim(text=sentence, segments=[e.id for e in cited], claimed_speaker=Speaker(claimed.value))
-        return judge(claim, cited, source.confidence if cited else None, settings), found.input_tokens + attributed.input_tokens
+    The chain head is always the Cour de cassation reporting someone else, so it only counts
+    when the Cour is the speaker itself; the reported voices (chain[1:]) always count, e.g.
+    « la cour d'appel a retenu à bon droit » is both the Cour's and the cour d'appel's.
+    """
+    return {entry.speaker.value, *(s.value for s in entry.chain[1:])}
 
-    results = await asyncio.gather(*(one(s) for s in sentences))
-    return [c for c, _ in results], sum(t for _, t in results)
+
+def strip_cues(sentence: str) -> str:
+    for pattern, _ in _CLAIM_CUES:
+        sentence = pattern.sub(" ", sentence)
+    return sentence
+
+
+_SEGMENT_REF = re.compile(r"\bS-(\d{3})\b")
+_PARAGRAPH_REF = re.compile(r"§\s?(\d+)")
+_BADGE = re.compile(r"\[[^\]]*\]")
+
+
+def cited(registry: Registry, sentence: str) -> list[RegistryEntry]:
+    """Segments the sentence cites explicitly ([S-013], §7): checked first, before any retrieval."""
+    ids = {f"S-{n}" for n in _SEGMENT_REF.findall(sentence)}
+    paragraphs = {int(n) for n in _PARAGRAPH_REF.findall(sentence)}
+    return [e for e in registry.entries if e.id in ids or (e.paragraph in paragraphs and e.zone is not Zone.METADONNEES)]
+
+
+def check(registry: Registry, text: str, threshold: float = 0.8) -> list[dict]:
+    entries = [e for e in registry.entries if e.zone is not Zone.METADONNEES]
+    index = BM25([e.text for e in entries])
+    results = []
+    for s, e in split_sentences(text):
+        sentence = text[s:e].strip()
+        if not sentence:
+            continue
+        claim = claimed_speaker(_BADGE.sub(" ", sentence))
+        query = strip_cues(_BADGE.sub(" ", _PARAGRAPH_REF.sub(" ", _SEGMENT_REF.sub(" ", sentence))))
+        refs = cited(registry, sentence)
+        best = max(refs, key=lambda c: coverage(query, c.text), default=None)
+        wrong_citation = bool(refs) and coverage(query, best.text) < SUPPORT_MIN
+        if not refs or wrong_citation:
+            best = max((entries[i] for i, _ in index.top(query, k=3)), key=lambda c: coverage(query, c.text), default=None)
+        support = coverage(query, best.text) if best else 0.0
+        entry = best if best and support >= SUPPORT_MIN else None
+
+        if entry is None:
+            verdict = Verdict.NON_SOURCE
+        elif claim is None:
+            verdict = Verdict.SANS_ATTRIBUTION
+        elif claim.value not in speakers_of(entry):
+            verdict = Verdict.MAL_ATTRIBUE
+        elif entry.speaker.confidence < threshold:
+            verdict = Verdict.A_VERIFIER
+        else:
+            verdict = Verdict.OK
+        results.append({"sentence": sentence, "claimed_speaker": claim.value if claim else None,
+                        "verdict": verdict.value, "support": round(support, 2), "entry": entry,
+                        "wrong_citation": wrong_citation})
+    return results

@@ -11,7 +11,7 @@ from lawhack.pipeline import analyse, load
 from lawhack.schema import render_badge
 from lawhack.system_one import TypeSafeSystemOne
 from lawhack.system_two import ask, ask_baseline
-from lawhack.verify import verify_text
+from lawhack.claim_check import verify_text
 
 
 def show(claims) -> None:
