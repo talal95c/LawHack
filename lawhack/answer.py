@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import time
+from typing import Literal
 
 from pydantic import BaseModel
 from typesafe_sdk import Choice, Noul
@@ -15,6 +16,7 @@ from lawhack.system_one import SystemOneClient
 ANSWER_ABOVE = 0.8
 WARN_ABOVE = 0.5
 MAX_PARAGRAPHS = 4
+FALLBACK_PARAGRAPHS = 2
 MIN_PARAGRAPH_P = 0.05
 COVER = 0.9
 PARAGRAPH_CHARS = 1500
@@ -63,6 +65,7 @@ class Answer(BaseModel):
     question: str
     sentences: list[AnswerSentence]
     abstained: bool = False
+    abstain_stage: Literal["retrieval", "draft"] | None = None
 
     def render(self) -> str:
         if self.abstained:
@@ -87,15 +90,18 @@ def _describe(e: RegistryEntry) -> str:
 
 
 async def retrieve(registry: Registry, question: str, client: SystemOneClient) -> list[RegistryEntry]:
-    """Jev picks the paragraph(s) answering the question (or none → abstention).
+    """Jev ranks relevant paragraphs; retrieval abstains only when the registry has none.
 
     A paragraph-level `choice` is far more reliable than per-sentence yes/no over the whole decision.
+    If both passes choose NONE, retain the top fallback paragraphs so the drafter can decide whether to abstain.
     The Cour's answer to a retrieved moyen is always added so the drafter can say whether it was upheld.
     """
     paragraphs: dict[str, list[RegistryEntry]] = {}
     for e in registry.entries:
         if e.zone not in (Zone.INTRODUCTION, Zone.METADONNEES):
             paragraphs.setdefault(f"P{e.block}", []).append(e)
+    if not paragraphs:
+        return []
     state = {
         "question": question,
         "paragraphs": {
@@ -105,21 +111,29 @@ async def retrieve(registry: Registry, question: str, client: SystemOneClient) -
     }
     keys = [*paragraphs, NONE]
     # Two passes with reversed option order counter Jev's first-option bias and run-to-run variance;
-    # we abstain only when both passes agree that no paragraph answers.
+    # when both choose NONE, use their averaged scores to select a small fallback context.
     passes = await asyncio.gather(*(client.decide(state, {"best": _paragraph_choice(order)}) for order in (keys, keys[::-1])))
     votes = [r.decisions["best"].probabilities for r in passes]
-    if all(max(v, key=v.get) == NONE for v in votes):
-        return []
+    fallback = all(max(v, key=v.get) == NONE for v in votes)
     averaged = {k: sum(v.get(k, 0.0) for v in votes) / len(votes) for k in keys if k != NONE}
     ranked = sorted(averaged.items(), key=lambda t: -t[1])
     picked: dict[str, RegistryEntry] = {}
-    cumulative = 0.0
-    for key, p in ranked[:MAX_PARAGRAPHS]:
-        if key == NONE or p < MIN_PARAGRAPH_P or cumulative >= COVER:
-            break
-        cumulative += p
-        for e in paragraphs[key]:
-            picked[e.id] = e
+    if fallback:
+        for key, _ in ranked[:FALLBACK_PARAGRAPHS]:
+            for e in paragraphs[key]:
+                picked[e.id] = e
+    else:
+        cumulative = 0.0
+        for key, p in ranked[:MAX_PARAGRAPHS]:
+            if p < MIN_PARAGRAPH_P or cumulative >= COVER:
+                break
+            cumulative += p
+            for e in paragraphs[key]:
+                picked[e.id] = e
+        if not picked:
+            for key, _ in ranked[:FALLBACK_PARAGRAPHS]:
+                for e in paragraphs[key]:
+                    picked[e.id] = e
     # The operative ruling is short and needed to state what the Cour actually decided.
     for e in registry.entries:
         if e.zone is Zone.DISPOSITIF:
@@ -178,7 +192,8 @@ Règles impératives :
 - Si le point n'apparaît que dans le moyen, écris que la Cour ne le tranche pas et que c'est l'argument du demandeur.
 - « Est-il établi que… ? » : si le fait n'est qu'allégué par une partie ou rapporté sans être constaté, dis qui l'allègue
   et que l'arrêt ne le tient pas pour établi.
-- Seulement si aucun extrait n'évoque le sujet de la question, réponds exactement : « L'arrêt ne traite pas cette question. »
+- Si un extrait évoque le sujet, même partiellement ou seulement dans le moyen d'une partie, réponds avec ce qu'il dit : précise qui le dit et ce que la Cour en fait (ou qu'elle ne le tranche pas). Une question « La Cour juge-t-elle que X ? » où X n'est que l'argument d'une partie appelle une réponse (« non, c'est l'argument du demandeur ; la Cour … »), pas une abstention.
+- Seulement si aucun extrait n'a de rapport avec la question, réponds exactement : « L'arrêt ne traite pas cette question. »
 - N'utilise aucune connaissance extérieure à ces extraits. Réponse en français, concise (au plus 5 phrases)."""
 
 
@@ -247,8 +262,8 @@ async def verify(draft_text: str, registry: Registry, client: SystemOneClient) -
 async def ask(registry: Registry, question: str, client: SystemOneClient, model: str | None = None) -> Answer:
     context = await retrieve(registry, question, client)
     if not context:
-        return Answer(question=question, sentences=[], abstained=True)
+        return Answer(question=question, sentences=[], abstained=True, abstain_stage="retrieval")
     text = await asyncio.to_thread(draft, question, context, model)
     if text.strip().startswith(NOT_ADDRESSED):
-        return Answer(question=question, sentences=[], abstained=True)
+        return Answer(question=question, sentences=[], abstained=True, abstain_stage="draft")
     return Answer(question=question, sentences=await verify(text, registry, client))

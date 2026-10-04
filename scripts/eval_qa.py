@@ -238,6 +238,15 @@ def summarise(rows: list[dict], system: str) -> dict:
             "correct": _wilson_rate(of_kind, lambda r: r["grade"]["correct"]),
         }
     if system == "lawhack":
+        abstentions_by_stage = Counter(
+            r["lawhack"].get("abstain_stage")
+            for r in rows
+            if r["system"] == "lawhack" and r.get("lawhack", {}).get("abstained")
+            and r["lawhack"].get("abstain_stage") in {"retrieval", "draft"}
+        )
+        summary["abstentions_by_stage"] = {
+            stage: abstentions_by_stage[stage] for stage in ("retrieval", "draft")
+        }
         with_answers = [r for r in answerable if "lawhack" in r and not r["lawhack"]["abstained"]]
         sentences = [(r, sentence) for r in with_answers for sentence in r["lawhack"]["sentences"]]
         pills = [(r, pill) for r, sentence in sentences for pill in sentence["pills"]]
@@ -461,6 +470,7 @@ async def evaluate_one(q: dict, system: str, registry, text: str, client, semaph
             answer = result.render()
             row["lawhack"] = {
                 "abstained": result.abstained,
+                "abstain_stage": result.abstain_stage,
                 "sentences": [
                     {
                         "supported": sentence.supported,
@@ -575,6 +585,9 @@ async def main() -> None:
               f"correct {metrics['correct']['rate']:.0%} · abstention juste {metrics['correct_abstention']['rate']:.0%} · "
               f"abstention à tort {metrics['false_abstention']['rate']:.0%} · invention {metrics['invented']['rate']:.0%} · "
               f"{metrics['seconds_mean']:.1f}s")
+        if system == "lawhack":
+            stages = metrics["abstentions_by_stage"]
+            print(f"  abstentions LawHack : retrieval={stages['retrieval']}, draft={stages['draft']}")
     if "baseline" in summary:
         print(f"vérificateur LawHack sur la baseline : "
               f"{summary['baseline']['verifier_flags_baseline_errors']['rate']:.0%} des hallucinations signalées, "

@@ -3,7 +3,7 @@ import asyncio
 from lawhack import answer as answer_module
 from lawhack.answer import ask
 from lawhack.attributor import build_registry
-from lawhack.schema import Decision
+from lawhack.schema import Decision, Registry, Zone
 from lawhack.segmenter import segment
 from lawhack.system_one import SystemOneResult
 from lawhack.zoning import zone_blocks
@@ -51,9 +51,16 @@ def _para(registry, n):
 
 def test_abstains_when_nothing_relevant(legifrance_doc, monkeypatch):
     registry = _registry(legifrance_doc)
-    monkeypatch.setattr(answer_module, "draft", lambda *a: (_ for _ in ()).throw(AssertionError("no LLM call")))
+    monkeypatch.setattr(answer_module, "draft", lambda *a: answer_module.NOT_ADDRESSED)
     result = asyncio.run(ask(registry, "Montant du préjudice moral ?", _fake(registry)))
     assert result.abstained and result.render() == answer_module.NOT_ADDRESSED
+    assert result.abstain_stage == "draft"
+
+
+def test_abstains_at_retrieval_only_when_registry_has_no_paragraphs():
+    registry = Registry(document_id="empty", entries=[])
+    result = asyncio.run(ask(registry, "Question ?", FakeRetrieval()))
+    assert result.abstained and result.abstain_stage == "retrieval"
 
 
 def test_pills_carry_speaker_paragraph_and_confidence(legifrance_doc, monkeypatch):
@@ -87,7 +94,7 @@ def test_retrieving_a_moyen_brings_the_cour_reply(legifrance_doc, monkeypatch):
     assert {e.paragraph for e in seen["ctx"]} >= {7, 8, 9, 10, 11}
 
 
-def test_abstains_only_when_both_passes_say_none(legifrance_doc, monkeypatch):
+def test_retrieves_normal_path_when_passes_select_paragraph(legifrance_doc, monkeypatch):
     registry = _registry(legifrance_doc)
     s10 = _para(registry, 10).id
     fake = _fake(registry, relevant={s10})
@@ -106,3 +113,37 @@ def test_abstains_only_when_both_passes_say_none(legifrance_doc, monkeypatch):
     fake.decide = flaky
     context = asyncio.run(answer_module.retrieve(registry, "Les acquéreurs devaient-ils accepter le prêt ?", fake))
     assert len(calls) == 2 and 10 in {e.paragraph for e in context}
+
+
+def test_retrieve_falls_back_to_top_paragraphs_when_both_passes_say_none(legifrance_doc):
+    registry = _registry(legifrance_doc)
+    first = _para(registry, 7)
+    second = _para(registry, 10)
+    first_key, second_key = f"P{first.block}", f"P{second.block}"
+
+    class AlwaysNone(FakeSystemOne):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def decide(self, state, questions):
+            if "best" not in questions:
+                return await super().decide(state, questions)
+            probabilities = {key: 0.0 for key in state["paragraphs"]}
+            probabilities.update({"NONE": 0.8, first_key: 0.34, second_key: 0.24})
+            if self.calls:
+                probabilities[first_key] = 0.30
+                probabilities[second_key] = 0.20
+            self.calls += 1
+            return SystemOneResult(
+                decisions={"best": Decision(value="NONE", probabilities=probabilities, confidence=0.8)},
+                model="fake",
+            )
+
+    fake = AlwaysNone()
+    context = asyncio.run(answer_module.retrieve(registry, "Question ?", fake))
+    ids = {entry.id for entry in context}
+    assert fake.calls == 2
+    assert {entry.id for entry in registry.entries if entry.block == first.block} <= ids
+    assert {entry.id for entry in registry.entries if entry.block == second.block} <= ids
+    assert {entry.id for entry in registry.entries if entry.zone is Zone.DISPOSITIF} <= ids
