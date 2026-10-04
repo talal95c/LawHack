@@ -310,7 +310,7 @@ Méthode de notation :
 
 ### Résultats — benchmark Légifrance 25 arrêts
 
-**Résultats (25 arrêts Légifrance, 112 questions, 2026-10-04)** — rapport complet : [`bench/legifrance25/BENCHMARK.md`](bench/legifrance25/BENCHMARK.md)
+**Résultats (25 arrêts Légifrance, 112 questions, 2026-10-04, code `b038009`, avant PR #26)** — rapport complet : [`bench/legifrance25/BENCHMARK.md`](bench/legifrance25/BENCHMARK.md)
 
 Corpus : 25 arrêts récents de 6 chambres (civ. 1/2/3, com., soc., crim.) couvrant toutes les solutions (rejet, cassation, partielle, sans renvoi). Les questions sont figées et le gold est structurel (métadonnées, marqueurs de l'arrêt, sommaire officiel). Chaque système a répondu deux fois, sur le PDF uploadé et sur le texte brut, soit 224 réponses par système. Les réponses sont notées par un juge aveugle, `mistral-large`, qui voit les réponses sans les pastilles ni le nom du système.
 
@@ -319,14 +319,22 @@ Corpus : 25 arrêts récents de 6 chambres (civ. 1/2/3, com., soc., crim.) couvr
 | **LawHack** | **0,86–0,87** | **11/224** | **47/50** | 27/50 | 49/50 | 45/50 |
 | Mistral seul | 0,76 | 44/224 | 0/50 | **39/50** | 49/50 | **49/50** |
 
-- Écart apparié LawHack − Mistral seul : +0,11 [+0,02 ; +0,20] sur le texte brut et +0,10 [+0,01 ; +0,19] sur le PDF (IC 95 % bootstrap).
-- Système 1 : fidélité d'ingestion PDF ≥ 0,986, zonage 98,5 %, locuteurs 259/259 sur les segments ancrés, solution 24/25.
-- L'erreur sur la solution est un bug : `_REJECT` ne reconnaît pas « REJETTE le recours ».
-- Faiblesses mesurées :
-  - absence de contrôle de **polarité** : un moyen rejeté ou un raisonnement censuré est repris comme « la Cour juge » (7 cas) ;
-  - abstentions à tort sur ces mêmes pièges (4 cas) ;
-  - filtre hors sujet trop permissif (5 cas) ;
-  - latence de 2 à 5 fois celle de Mistral seul.
+| Indicateur | LawHack | Mistral seul |
+|---|---|---|
+| Score global (texte brut / PDF) | **0,87 / 0,86** | 0,76 / 0,76 |
+| Réponses entièrement correctes | **182/224** | 159/224 |
+| Score sur les pièges d'attribution (texte / PDF) | **0,82 / 0,79** | 0,48 / 0,49 |
+| Règle conforme au sommaire officiel | 14/24 | **22/24** |
+| Faits inventés | 4 | **1** |
+| Latence médiane / réponse (texte / PDF) | 2,4 s / 5,9 s | **1,1 s / 1,2 s** |
+| Lecture Système 1 | ingestion PDF ≥ 0,986 · zonage 98,5 % · locuteurs 259/259 · solution 24/25 (bug « REJETTE le recours ») | — (pas de registre) |
+| Écart apparié (IC 95 % bootstrap) | +0,11 [+0,02 ; +0,20] texte · +0,10 [+0,01 ; +0,19] PDF | référence |
+
+| Faiblesse mesurée de LawHack | Cas |
+|---|---|
+| Pas de contrôle de **polarité** : moyen rejeté ou raisonnement censuré repris comme « la Cour juge » | 7 |
+| Abstention à tort sur ces mêmes pièges | 4 |
+| Filtre hors sujet trop permissif | 5 |
 
 ### Résultats — Judilibre (zonage, QA dev et held-out)
 
@@ -448,6 +456,10 @@ python scripts/ask.py data/samples/cass_civ3_2022-12-14_21-24539.pdf "Que décid
 ```
 
 Le registre est mis en cache dans `data/cache/<doc_id>.json` (`--no-cache` pour le recalculer).
+
+### Déploiement (Render)
+
+`render.yaml` décrit un service web unique (landing + démo + API) : Render → **New → Blueprint** → choisir ce repo, puis renseigner `TYPESAFE_API_KEY` (clé Codiv) et `MISTRAL_API_KEY`. Démarrage : `uvicorn app.server:app --host 0.0.0.0 --port $PORT`. Pas Vercel : la démo garde les registres en mémoire et écrit dans `data/`, il lui faut un process unique et persistant. Sur le plan gratuit, le disque est éphémère (historique « Déjà analysés » et feedback remis à zéro à chaque redéploiement/mise en veille) et le premier accès après inactivité prend ~1 min.
 
 ## 11. Démo (≈ 3 minutes)
 
