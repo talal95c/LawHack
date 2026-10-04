@@ -41,6 +41,10 @@ def judge(claim: Claim, cited: list[RegistryEntry], support: float | None, setti
     if claim.claimed_speaker is Speaker.COUR_CASSATION and only_argued:
         return CheckedClaim(**out, badge=Badge.NON_TRANCHE,
                             note=f"La Cour ne tranche pas ce point ; c'est l'argument du {SPEAKER_LABELS[actual].lower()} ({_where(primary)}).")
+    if claim.claimed_speaker is Speaker.JURIDICTION_FOND and only_argued:
+        # A moyen quotes the decision under appeal, but only as the party reports it.
+        return CheckedClaim(**out, badge=Badge.A_VERIFIER,
+                            note=f"Rapporté par le {SPEAKER_LABELS[actual].lower()} ({_where(primary)}) : à confirmer dans l'arrêt attaqué.")
     if claim.claimed_speaker is not Speaker.INDETERMINE and claim.claimed_speaker.value not in speakers:
         return CheckedClaim(**out, badge=Badge.MAL_ATTRIBUE,
                             note=f"Attribué à : {SPEAKER_LABELS[claim.claimed_speaker]} — en réalité : {SPEAKER_LABELS[actual]} ({_where(primary)}).")
@@ -51,22 +55,21 @@ def judge(claim: Claim, cited: list[RegistryEntry], support: float | None, setti
 
 
 async def check_claims(claims: list[Claim], registry: Registry, client: SystemOneClient, settings: Settings) -> tuple[list[CheckedClaim], int]:
-    """Claims drafted by Système 2: Jev checks that the cited segments support each one (one batched call)."""
+    """Claims drafted by Système 2: Jev checks that the cited segments support each one."""
     cited = {i: [e for e in map(registry.by_id, c.segments) if e] for i, c in enumerate(claims)}
     checkable = {i: es for i, es in cited.items() if es}
     support: dict[int, float] = {}
     tokens = 0
-    if checkable:
-        segments = {e.id: e.text for es in checkable.values() for e in es}
-        state = {"claims": {f"C{i}": claims[i].text for i in checkable}, "segments": segments}
-        questions = {
-            f"support:C{i}": Noul(instructions=f"Is claim `claims.C{i}` directly supported by at least one of the segments "
-                                               f"{', '.join(f'`segments.{e.id}`' for e in es)}? Ignore who said it; judge the content.")
-            for i, es in checkable.items()
-        }
-        result = await client.decide(state, questions)
-        tokens = result.input_tokens
-        support = {i: result.decisions[f"support:C{i}"].probabilities.get("true", 0.0) for i in checkable}
+
+    async def one(i: int, es: list[RegistryEntry]) -> None:
+        nonlocal tokens
+        state = {"claim": claims[i].text, "segments": {e.id: e.text for e in es}}
+        question = Noul(instructions="Is `claim` directly supported by at least one of `segments`? Ignore who said it; judge the content.")
+        result = await client.decide(state, {"support": question})  # one claim per call, see routing.py
+        tokens += result.input_tokens
+        support[i] = result.decisions["support"].probabilities.get("true", 0.0)
+
+    await asyncio.gather(*(one(i, es) for i, es in checkable.items()))
     return [judge(c, cited[i], support.get(i), settings) for i, c in enumerate(claims)], tokens
 
 

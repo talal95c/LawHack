@@ -72,6 +72,22 @@ def test_lower_court_finding_attributed_to_cour_is_flagged(registry):
     assert "Cour d'appel (§8)" in claim.note
 
 
+def test_lower_court_quoted_in_a_moyen_is_to_be_checked(registry):
+    s7 = seg(registry, 7)
+    chat = FakeChat(json.dumps({"status": "ANSWER", "claims": [
+        {"text": "La cour d'appel a déclaré la promesse caduque.", "segments": [s7.id], "claimed_speaker": "JURIDICTION_FOND"}]}))
+    claim = run("Qu'a décidé la cour d'appel ?", registry, answering_jev(), chat).claims[0]
+    assert claim.badge is Badge.A_VERIFIER and "arrêt attaqué" in claim.note
+
+
+def test_jev_gets_one_question_per_call(registry):
+    jev = answering_jev()
+    chat = FakeChat(json.dumps({"status": "ANSWER", "claims": [
+        {"text": "La Cour rejette le pourvoi.", "segments": [seg(registry, 9).id], "claimed_speaker": "COUR_CASSATION"}]}))
+    run("Pourquoi la Cour rejette-t-elle le pourvoi ?", registry, jev, chat)
+    assert jev.calls and all(len(c["questions"]) == 1 for c in jev.calls)
+
+
 def test_unknown_or_unsupported_segments_lead_to_abstention(registry):
     chat = FakeChat(json.dumps({"status": "ANSWER", "claims": [
         {"text": "La Cour accorde 50 000 euros.", "segments": ["S-999"], "claimed_speaker": "COUR_CASSATION"}]}))

@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections import Counter
 
-from lawhack.schema import Registry, RegistryEntry, Zone
+from lawhack.schema import Registry, RegistryEntry, Speaker, Zone
 
 _WORD = re.compile(r"[a-z0-9]+")
 _STOPWORDS = set(
@@ -55,10 +55,16 @@ class BM25Index:
         return scored[:top_k]
 
 
+def pinned(registry: Registry) -> list[RegistryEntry]:
+    """What the Cour itself says (its own reasons and the dispositif): short, and the ground truth of the decision."""
+    return [e for e in registry.entries if e.zone is Zone.DISPOSITIF
+            or (e.zone is Zone.MOTIVATIONS and e.speaker.value == Speaker.COUR_CASSATION.value)]
+
+
 def retrieve(registry: Registry, query: str, top_k: int = 8, index: BM25Index | None = None) -> list[RegistryEntry]:
-    """Top BM25 hits plus the dispositif (short, and the ground truth of what the Cour decides)."""
+    """Top BM25 hits plus the pinned segments, which BM25 often misses on "why" questions."""
     hits = [e for e, _ in (index or BM25Index(registry)).search(query, top_k)]
     seen = {e.id for e in hits}
-    hits += [e for e in registry.entries if e.zone is Zone.DISPOSITIF and e.id not in seen]
+    hits += [e for e in pinned(registry) if e.id not in seen]
     order = {e.id: i for i, e in enumerate(registry.entries)}
     return sorted(hits, key=lambda e: order[e.id])
