@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from lawhack.config import Settings
@@ -19,6 +20,8 @@ from lawhack.verify import verify_text
 
 load_dotenv()
 app = FastAPI(title="LawHack")
+ROOT = Path(__file__).resolve().parent.parent
+SAMPLES = ROOT / "data" / "samples"
 _store: dict[str, tuple[str, Registry, Solution]] = {}
 
 
@@ -96,3 +99,21 @@ def verify(req: VerifyRequest) -> list[CheckedClaim]:
     settings = Settings.from_env()
     claims, _ = asyncio.run(verify_text(req.text, registry, TypeSafeSystemOne(), settings))
     return claims
+
+
+@app.get("/", include_in_schema=False)
+def ui() -> FileResponse:
+    return FileResponse(ROOT / "ui" / "index.html")
+
+
+@app.get("/samples", response_model=list[str])
+def samples() -> list[str]:
+    return sorted(p.name for p in SAMPLES.glob("*.pdf"))
+
+
+@app.get("/samples/{name}", include_in_schema=False)
+def sample(name: str) -> FileResponse:
+    path = SAMPLES / Path(name).name
+    if path.suffix != ".pdf" or not path.is_file():
+        raise HTTPException(404, "Arrêt de démonstration inconnu")
+    return FileResponse(path, media_type="application/pdf")

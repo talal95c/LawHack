@@ -357,7 +357,7 @@ Voir `.env.example`.
 ```bash
 python scripts/ask.py arret.pdf "Que décide la Cour sur le montant du prêt ?" --baseline
 python scripts/ask.py arret.pdf --verify "La Cour juge que l'indemnité est due."
-uvicorn server.api:app --reload   # POST /load (PDF), POST /ask, POST /verify, GET /registry/{id}
+uvicorn server.api:app --reload   # interface : http://localhost:8000 · API : POST /load, POST /ask, POST /verify, GET /registry/{id}
 ```
 
 Modules : `retrieval.py` (BM25 + dispositif) → `routing.py` (Jev : nature de la question,

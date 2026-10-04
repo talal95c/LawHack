@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LawHack</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dc;
+    --COUR_CASSATION: #1f3a93; --JURIDICTION_FOND: #7a3e9d; --DEMANDEUR: #0f7c80; --DEFENDEUR: #2f8a3b;
+    --MINISTERE_PUBLIC: #8a5a2b; --LOI: #555; --INDETERMINE: #9a9a9a;
+    --warn: #e08a00; --bad: #c62828; --grey: #8d8d8d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
+  header .tag { color: var(--muted); font-size: 14px; }
+  header .meta { margin-left: auto; color: var(--muted); font-size: 13px; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px; }
+  .drop { display: block; border: 2px dashed #c9c6bd; border-radius: 14px; padding: 56px 24px; text-align: center; background: var(--panel); cursor: pointer; transition: .15s; }
+  .drop.over { border-color: var(--COUR_CASSATION); background: #eef1fb; }
+  .drop h2 { margin: 0 0 6px; font-size: 18px; }
+  .drop p { margin: 0; color: var(--muted); }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .reading { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .reading .counter { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .mini { max-height: 360px; overflow: hidden; font-size: 11px; line-height: 1.35; color: #b7b4ab; }
+  .mini div { padding: 2px 6px; border-left: 3px solid transparent; transition: color .2s, background .2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; background: var(--c); }
+  .chat { display: none; }
+  .doc { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+  .doc b { font-weight: 600; }
+  .thread { display: flex; flex-direction: column; gap: 14px; margin-bottom: 110px; }
+  .q { align-self: flex-end; background: var(--ink); color: #fff; padding: 9px 14px; border-radius: 14px 14px 4px 14px; max-width: 75%; }
+  .a { background: var(--panel); border: 1px solid var(--line); padding: 14px 16px; border-radius: 14px 14px 14px 4px; max-width: 92%; }
+  .a .claim { margin: 0 0 8px; }
+  .a .claim:last-of-type { margin-bottom: 0; }
+  .a .note { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .a .msg { font-weight: 600; margin-bottom: 8px; }
+  .a .abstain { color: var(--muted); font-style: italic; }
+  .a .foot { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .pill { position: relative; display: inline-block; font-size: 12.5px; font-weight: 600; color: #fff; background: var(--c); padding: 1px 8px; border-radius: 999px; margin-left: 4px; cursor: help; white-space: nowrap; }
+  .pill.A_VERIFIER { box-shadow: 0 0 0 2px var(--warn); }
+  .pill.MAL_ATTRIBUE { background: var(--bad); }
+  .pill.NON_SOUTENU, .pill.NON_TRANCHE { background: var(--grey); }
+  .claim.MAL_ATTRIBUE .txt { text-decoration: underline wavy var(--bad); }
+  .claim.NON_SOUTENU .txt { color: var(--muted); text-decoration: line-through; }
+  .tip { display: none; position: absolute; left: 0; top: 130%; z-index: 10; width: 420px; max-width: 80vw; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 12px; font-weight: 400; white-space: normal; font-size: 13px; line-height: 1.45; }
+  .pill:hover .tip, .pill.open .tip { display: block; }
+  .tip .src { display: block; max-height: 160px; overflow: auto; border-left: 3px solid var(--c); padding-left: 8px; margin: 6px 0 8px; color: #333; }
+  .tip .bar { display: flex; margin-top: 2px; align-items: center; gap: 6px; font-size: 12px; }
+  .tip .bar i { display: block; height: 6px; border-radius: 3px; background: var(--c); }
+  .tip .h { display: block; margin: 0; font-size: 12px; color: var(--muted); font-weight: 600; }
+  form.ask { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 24px 18px; background: linear-gradient(transparent, var(--bg) 30%); }
+  form.ask .row { max-width: 872px; margin: 0 auto; display: flex; gap: 8px; }
+  form.ask input { flex: 1; font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid #cfccc4; background: #fff; }
+  .typing { color: var(--muted); font-style: italic; }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>LawHack</h1>
+  <span class="tag">Les IA juridiques savent ce qui a été dit. LawHack vérifie qui l'a dit.</span>
+  <span class="meta" id="meta"></span>
+</header>
+<main>
+  <section id="upload">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="application/pdf" hidden>
+      <h2>Déposez un arrêt (PDF Légifrance / Judilibre)</h2>
+      <p>LawHack identifie qui parle dans chaque paragraphe, puis répond à vos questions en citant l'arrêt.</p>
+    </label>
+    <p style="text-align:center;margin-top:14px"><button class="btn" id="sample">Charger l'arrêt de démonstration</button></p>
+  </section>
+
+  <section class="reading" id="reading">
+    <div class="counter" id="counter">Lecture de l'arrêt…</div>
+    <div class="mini" id="mini"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="chat" id="chat">
+    <div class="doc"><span id="docinfo"></span><button class="btn" id="reset">Autre arrêt</button></div>
+    <div class="thread" id="thread"></div>
+    <form class="ask" id="ask"><div class="row">
+      <input id="question" placeholder="Posez une question sur l'arrêt…" autocomplete="off">
+      <button class="btn primary" id="send">Demander</button>
+    </div></form>
+  </section>
+</main>
+<script>
+const SPEAKERS = {COUR_CASSATION: "Cour", JURIDICTION_FOND: "Cour d'appel", DEMANDEUR: "Demandeur", DEFENDEUR: "Défendeur",
+                  MINISTERE_PUBLIC: "Ministère public", LOI: "Loi", INDETERMINE: "Indéterminé"};
+const ZONES = {introduction: "Introduction", expose: "Exposé du litige", moyens: "Moyens", motivations: "Réponse de la Cour",
+               dispositif: "Dispositif", metadonnees: "Métadonnées"};
+const SOLUTIONS = {REJET: "Rejet", CASSATION: "Cassation", CASSATION_PARTIELLE: "Cassation partielle",
+                   CASSATION_SANS_RENVOI: "Cassation sans renvoi", CASSATION_PARTIELLE_SANS_RENVOI: "Cassation partielle sans renvoi", AUTRE: "Autre"};
+const FLAGS = {OK: "", A_VERIFIER: " ⚠", NON_TRANCHE: " · non tranché", MAL_ATTRIBUE: " ✗"};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const pct = p => Math.round(p * 100) + " %";
+let doc = null, registry = null, byId = {};
+
+$("legend").innerHTML = Object.entries(SPEAKERS).map(([k, v]) => `<span style="--c:var(--${k})">${v}</span>`).join("");
+
+async function upload(file) {
+  $("upload").style.display = "none";
+  $("reading").style.display = "block";
+  $("counter").textContent = `Lecture de « ${file.name} »…`;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    const r = await fetch("/load", {method: "POST", body});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    doc = await r.json();
+    registry = await (await fetch(`/registry/${doc.document_id}`)).json();
+    byId = Object.fromEntries(registry.entries.map(e => [e.id, e]));
+    await animate();
+    openChat();
+  } catch (e) {
+    $("counter").innerHTML = `<span class="err">Échec de l'analyse : ${esc(e.message)}</span>`;
+    setTimeout(reset, 4000);
+  }
+}
+
+async function animate() {
+  const es = registry.entries.filter(e => e.zone !== "metadonnees");
+  $("mini").innerHTML = es.map(e => `<div id="m-${e.id}">${esc(e.text)}</div>`).join("");
+  const perPara = Math.round(doc.seconds * 1000 / Math.max(es.length, 1));
+  for (let i = 0; i < es.length; i++) {
+    const e = es[i], el = $("m-" + e.id), c = `var(--${e.speaker.value})`;
+    el.style.color = c; el.style.borderLeftColor = c; el.style.background = "#fafaf7";
+    el.scrollIntoView({block: "nearest"});
+    $("counter").textContent = `${i + 1} / ${es.length} segments attribués · ${perPara} ms/segment · ${doc.input_tokens.toLocaleString("fr")} tokens`;
+    await new Promise(r => setTimeout(r, Math.min(90, 2500 / es.length)));
+  }
+  await new Promise(r => setTimeout(r, 600));
+}
+
+function openChat() {
+  $("reading").style.display = "none";
+  $("chat").style.display = "block";
+  $("docinfo").innerHTML = `<b>Arrêt ${esc(doc.document_id)}</b> · ${SOLUTIONS[doc.solution] || doc.solution} · ${doc.segments} segments · analysé en ${doc.seconds.toFixed(2)} s`;
+  $("meta").textContent = registry.model ? `Système 1 : ${registry.model}` : "";
+  $("question").focus();
+}
+
+function reset() {
+  doc = registry = null; byId = {};
+  $("thread").innerHTML = ""; $("mini").innerHTML = "";
+  $("chat").style.display = "none"; $("reading").style.display = "none"; $("upload").style.display = "block";
+  $("file").value = "";
+}
+
+function tooltip(claim) {
+  const cit = claim.citations[0], seg = cit && byId[cit.segment_id];
+  if (!cit) return `<span class="tip">Aucun passage de l'arrêt ne soutient cette affirmation.</span>`;
+  const dist = Object.entries(cit.speaker.probabilities).sort((a, b) => b[1] - a[1]).filter(([, p]) => p >= 0.01).slice(0, 4);
+  const others = claim.citations.slice(1).map(c => c.label).join(", ");
+  return `<span class="tip">
+    <span class="h">${esc(cit.label)} · ${esc(cit.segment_id)}</span>
+    <span class="src">${esc(seg ? seg.text : "")}</span>
+    <span class="h">Qui parle (Jev)</span>
+    ${dist.map(([k, p]) => `<span class="bar" style="--c:var(--${k})"><i style="width:${Math.max(p * 160, 3)}px"></i>${SPEAKERS[k] || k} ${pct(p)}</span>`).join("")}
+    ${others ? `<span class="h" style="margin-top:6px">Autres sources : ${esc(others)}</span>` : ""}
+  </span>`;
+}
+
+function pill(claim) {
+  if (claim.badge === "NON_SOUTENU" || !claim.citations.length)
+    return `<span class="pill NON_SOUTENU">non soutenu par l'arrêt ✗${tooltip(claim)}</span>`;
+  const cit = claim.citations[0], who = claim.actual_speaker || "INDETERMINE";
+  const where = cit.paragraph ? `§${cit.paragraph}` : (ZONES[cit.zone] || cit.zone);
+  return `<span class="pill ${claim.badge}" style="--c:var(--${who})">${SPEAKERS[who]} · ${where} · ${pct(claim.confidence)}${FLAGS[claim.badge]}${tooltip(claim)}</span>`;
+}
+
+function renderAnswer(a) {
+  if (a.status === "HORS_ARRET" && !a.claims.length)
+    return `<div class="abstain">${esc(a.message || "L'arrêt ne traite pas cette question.")}</div>`;
+  const msg = a.message ? `<div class="msg">${esc(a.message)}</div>` : "";
+  const claims = a.claims.map(c => `<div class="claim ${c.badge}"><span class="txt">${esc(c.text)}</span>${pill(c)}${c.note && c.badge !== "OK" ? `<span class="note">↳ ${esc(c.note)}</span>` : ""}</div>`).join("");
+  return msg + claims + `<div class="foot">${a.seconds} s · ${a.model ? esc(a.model) + " + " : ""}${esc(registry.model || "Jev")} · survolez une pastille pour voir la source</div>`;
+}
+
+$("ask").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const question = $("question").value.trim();
+  if (!question || !doc) return;
+  $("question").value = ""; $("send").disabled = true;
+  $("thread").insertAdjacentHTML("beforeend", `<div class="q">${esc(question)}</div>`);
+  const box = document.createElement("div");
+  box.className = "a"; box.innerHTML = `<span class="typing">Vérification dans l'arrêt…</span>`;
+  $("thread").appendChild(box); box.scrollIntoView({behavior: "smooth"});
+  try {
+    const r = await fetch("/ask", {method: "POST", headers: {"Content-Type": "application/json"},
+                                   body: JSON.stringify({document_id: doc.document_id, question})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    box.innerHTML = renderAnswer((await r.json()).answer);
+  } catch (e) {
+    box.innerHTML = `<span class="err">Erreur : ${esc(e.message)}</span>`;
+  }
+  $("send").disabled = false; $("question").focus();
+  box.scrollIntoView({behavior: "smooth", block: "nearest"});
+});
+
+$("file").addEventListener("change", e => e.target.files[0] && upload(e.target.files[0]));
+const drop = $("drop");
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]));
+$("reset").addEventListener("click", reset);
+$("thread").addEventListener("click", e => {
+  const p = e.target.closest(".pill");
+  document.querySelectorAll(".pill.open").forEach(o => o !== p && o.classList.remove("open"));
+  if (p && !e.target.closest(".tip")) p.classList.toggle("open");
+});
+$("sample").addEventListener("click", async () => {
+  const name = (await (await fetch("/samples")).json())[0];
+  if (!name) return alert("Aucun arrêt de démonstration dans data/samples");
+  const blob = await (await fetch(`/samples/${encodeURIComponent(name)}`)).blob();
+  upload(new File([blob], name, {type: "application/pdf"}));
+});
+</script>
+</body>
+</html>
