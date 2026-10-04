@@ -1,12 +1,46 @@
-# LawHack
+# LawHack — Legible
 
 > **Les IA juridiques savent ce qui a été dit. LawHack vérifie qui l'a dit.**
 
-LawHack est un *harness* **Système 1 → Système 2** pour les décisions de justice françaises.
-Un modèle rapide et calibré (Jev, de TypeSafe) attribue chaque passage d'un arrêt à son
-locuteur — la Cour, la juridiction du fond, une partie… — avec une probabilité. Un grand LLM
-(Mistral) répond ensuite aux questions de l'avocat à partir de cette compréhension structurée,
-en citant le paragraphe source et en signalant honnêtement ses doutes.
+<p align="center">
+  <a href="https://legible-or4n.onrender.com/"><b>▶ Tester la démo en ligne : legible-or4n.onrender.com</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://legible-or4n.onrender.com/showcase/">Présentation et benchmark</a>
+</p>
+
+> **Pour tester :** ouvrez [legible-or4n.onrender.com](https://legible-or4n.onrender.com/), déposez un arrêt de la Cour de
+> cassation (PDF Légifrance/Judilibre, scan ou `.txt`) ou lancez l'arrêt de démo, puis posez une question piège :
+> *« La Cour de cassation a-t-elle constaté que… ? »*. Cliquez sur une citation (§n) pour voir la phrase source.
+> Hébergement gratuit (Render) : le premier chargement après inactivité peut prendre ~1 min.
+
+## En bref
+
+1. Les LLM juridiques font des **hallucinations d'attribution** : ils présentent le moyen du demandeur, ou ce
+   qu'a constaté la cour d'appel, comme la décision de la Cour de cassation.
+2. LawHack est un *harness* **Système 1 → Système 2** :
+   - **Jev** (TypeSafe, Système 1), modèle de décision rapide et calibré, attribue chaque phrase de l'arrêt à son
+     locuteur (la Cour, le juge du fond, une partie…) avec une confiance ;
+   - **Mistral** (Système 2) rédige la réponse à partir de ce registre, en citant le paragraphe source ;
+   - Jev **revérifie chaque phrase** de la réponse ; le code décide : réécrire, avertir ou s'abstenir.
+3. Résultat sur 25 arrêts Légifrance et 112 questions figées : **4 fois moins d'erreurs d'attribution** que le même
+   modèle utilisé seul avec l'arrêt entier en contexte.
+
+| Benchmark Légifrance (25 arrêts, 448 réponses, juge aveugle `mistral-large`) | **LawHack** | Mistral seul |
+|---|---|---|
+| Score global Q&A (0–1), texte brut / PDF | **0,87 / 0,86** | 0,76 / 0,76 |
+| Réponses avec erreur d'attribution | **11 / 224** | 44 / 224 |
+| « La Cour a-t-elle constaté… ? » (fait du juge du fond) | **47 / 50** | 0 / 50 |
+| Système 1 : zonage · locuteurs · solution | 98,5 % · 259/259 · 24/25 | — |
+| Coût / latence par question | < 1 centime · ~2–6 s | ~1 s |
+
+Détail, méthode et faiblesses mesurées : [§8 Évaluation](#8-évaluation) et
+[`bench/legifrance25/BENCHMARK.md`](bench/legifrance25/BENCHMARK.md).
+
+**Exemple réel (même arrêt en contexte)**
+> Q : « La Cour de cassation a-t-elle constaté que les caves sont accessibles depuis les fonds inférieurs ? »
+> Mistral seul : « Oui, la Cour de cassation a constaté que… » → **mauvais locuteur** (c'est un constat de la cour
+> d'appel, rapporté par la Cour ; la Cour de cassation est juge du droit, pas des faits).
+> LawHack : attribue le constat à la cour d'appel, cite le paragraphe, et dit ce que la Cour a elle-même décidé.
 
 Projet né au hackathon Mistral × Stanford CodeX (LLM x Law, Paris).
 
@@ -459,17 +493,31 @@ Le registre est mis en cache dans `data/cache/<doc_id>.json` (`--no-cache` pour 
 
 ### Déploiement (Render)
 
+Instance publique : **https://legible-or4n.onrender.com/** (démo) · `/showcase/` (landing).
+
 `render.yaml` décrit un service web unique (landing + démo + API) : Render → **New → Blueprint** → choisir ce repo, puis renseigner `TYPESAFE_API_KEY` (clé Codiv) et `MISTRAL_API_KEY`. Démarrage : `uvicorn app.server:app --host 0.0.0.0 --port $PORT`. Pas Vercel : la démo garde les registres en mémoire et écrit dans `data/`, il lui faut un process unique et persistant. Sur le plan gratuit, le disque est éphémère (historique « Déjà analysés » et feedback remis à zéro à chaque redéploiement/mise en veille) et le premier accès après inactivité prend ~1 min.
 
-## 11. Démo (≈ 3 minutes)
+## 11. Démo (pitch de 5 minutes)
 
-1. Le problème en une phrase + un exemple réel d'erreur d'attribution.
-2. Dépôt du PDF d'un arrêt → animation de lecture (vitesse, coût).
-3. Question piège en écran partagé : Astra attribue à la Cour l'argument du demandeur ;
-   LawHack répond juste, avec pastilles et §.
-4. Bouton « Vérifier » sur la réponse d'Astra → phrase en rouge.
-5. Un « je ne sais pas » honnête de LawHack face à une invention d'Astra.
-6. Le chiffre du benchmark : taux d'hallucination d'attribution Astra vs LawHack, coût, latence.
+Démo en ligne : **[legible-or4n.onrender.com](https://legible-or4n.onrender.com/)** · landing et benchmark :
+[/showcase](https://legible-or4n.onrender.com/showcase/).
+
+| Temps | Contenu | Support |
+|---|---|---|
+| 0:00–0:45 | Le problème + l'exemple réel : « la Cour de cassation a constaté que… » ✗ | Slide : les 3 voix d'un arrêt |
+| 0:45–3:00 | **Démo live** : dépôt du PDF → question piège → pastilles et clic sur la source → « je ne sais pas » honnête. Écran partagé avec Astra | Live |
+| 3:00–3:40 | Architecture : « Jev juge, Mistral rédige, le code décide » | Slide pipeline |
+| 3:40–4:20 | Chiffres : 4× moins d'erreurs d'attribution, 47/50 vs 0/50 sur le piège clé, < 1 centime par question | Slide grands chiffres |
+| 4:20–5:00 | Garde-fou MCP (Le Chat, Claude, Harvey, Legora), retours avocat → fine-tuning, vision | Slide vision |
+
+**Sécuriser la démo :**
+- ouvrir le site quelques minutes avant (réveil du plan gratuit Render) et pré-charger l'arrêt de démo pour qu'il
+  apparaisse dans « Déjà analysés » (cache : instantané même si le réseau est lent) ;
+- préparer 2–3 questions pièges déjà testées ;
+- vider `data/feedback/` (en local) pour que les statistiques d'apprentissage partent de 0.
+
+**À ne pas dire :** « zéro erreur » ; « le modèle apprend en direct » ; « précision certifiée ».
+La promesse : beaucoup moins d'erreurs, mesurées, et quand LawHack doute, il le dit.
 
 ## 12. Feuille de route
 
