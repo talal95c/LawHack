@@ -19,7 +19,7 @@ Built in a team of three at the LLM × Law Hackathon (Mistral × Stanford Law Sc
 
 **Limits.** On a separate held-out set (102 questions, 30 unseen rulings) the attribution-hallucination gap is smaller and not significant (22% vs 26%, McNemar p = 0.66), and Legible abstains wrongly more often. The judge and the baseline are both Mistral models, and references were not yet reviewed by lawyers. Details: [§8 Évaluation](#8-évaluation) and [`bench/legifrance25/BENCHMARK.md`](bench/legifrance25/BENCHMARK.md).
 
-**Run it:** `python3 -m pip install --user -e ".[dev]"` then `PORT=8000 uvicorn app.server:app --host 0.0.0.0 --port 8000` (works offline with a heuristic fallback). Demo: https://law-hack.vercel.app
+**Run it:** `python3 -m pip install --user -e ".[dev]"` then `uvicorn app.server:app --port 8000` (works offline with a heuristic fallback). Demo: https://law-hack.vercel.app
 
 ---
 
