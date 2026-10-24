@@ -1,19 +1,44 @@
-# LawHack
+# Legible
 
-> **Les IA juridiques savent ce qui a été dit. LawHack vérifie qui l'a dit.**
+> **Les IA juridiques savent ce qui a été dit. Legible vérifie qui l'a dit.**
 
-LawHack est un *harness* **Système 1 → Système 2** pour les décisions de justice françaises.
+## In English
+
+**Legible** is a harness that reduces attribution hallucinations in legal LLMs on French Supreme Court (*Cour de cassation*) rulings. A fast, calibrated System 1 model (Jev) attributes every passage of a ruling to its speaker (the Court, the lower court, a party) with a probability; a large LLM (Mistral) then answers the lawyer's question from that structured reading, cites the source paragraph and abstains when the ruling does not support an answer.
+
+Built in a team of three at the LLM × Law Hackathon (Mistral × Stanford Law School, Paris, October 2026), where it won the Legora track.
+
+**Benchmark (25 Légifrance rulings, 112 questions × PDF and text = 224 answers per system, blind LLM judge)**
+
+| | Legible | Mistral alone |
+|---|---|---|
+| Answers with an attribution error | **11 / 224** | 44 / 224 |
+| Overall score (0–1) | **0.86–0.87** | 0.76 |
+| Fully correct answers | **182 / 224** | 159 / 224 |
+| Paired gain (95% bootstrap CI) | +0.11 [+0.02, +0.20] | reference |
+
+**Limits.** On a separate held-out set (102 questions, 30 unseen rulings) the attribution-hallucination gap is smaller and not significant (22% vs 26%, McNemar p = 0.66), and Legible abstains wrongly more often. The judge and the baseline are both Mistral models, and references were not yet reviewed by lawyers. Details: [§8 Évaluation](#8-évaluation) and [`bench/legifrance25/BENCHMARK.md`](bench/legifrance25/BENCHMARK.md).
+
+**Run it:** `python3 -m pip install --user -e ".[dev]"` then `uvicorn app.server:app --port 8000` (works offline with a heuristic fallback). Demo: https://law-hack.vercel.app
+
+---
+
+Documentation détaillée (français) ci-dessous.
+
+Legible est un *harness* **Système 1 → Système 2** pour les décisions de justice françaises.
 Un modèle rapide et calibré (Jev, de TypeSafe) attribue chaque passage d'un arrêt à son
 locuteur — la Cour, la juridiction du fond, une partie… — avec une probabilité. Un grand LLM
 (Mistral) répond ensuite aux questions de l'avocat à partir de cette compréhension structurée,
 en citant le paragraphe source et en signalant honnêtement ses doutes.
 
-Projet né au hackathon Mistral × Stanford CodeX (LLM x Law, Paris).
+Projet né au LLM × Law Hackathon (Mistral × Stanford Law School, Paris, 4 octobre 2026), lauréat du track Legora.
 
 ---
 
 ## Sommaire
 
+- [In English](#in-english)
+- [Feuille de route, équipe et consignes de code](docs/hackathon.md)
 1. [Le problème](#1-le-problème)
 2. [Le produit (V1)](#2-le-produit-v1)
 3. [Format de présentation (UX AI native)](#3-format-de-présentation-ux-ai-native)
@@ -24,11 +49,8 @@ Projet né au hackathon Mistral × Stanford CodeX (LLM x Law, Paris).
 8. [Évaluation](#8-évaluation)
 9. [Stack technique et arborescence](#9-stack-technique-et-arborescence)
 10. [Configuration et clés](#10-configuration-et-clés)
-11. [Démo](#11-démo)
-12. [Feuille de route](#12-feuille-de-route)
-13. [Organisation de l'équipe](#13-organisation-de-léquipe-3-personnes)
-14. [Consignes pour les agents de code](#14-consignes-pour-les-agents-de-code)
-15. [Références](#15-références)
+11. [Démo](#11-démo-3-minutes)
+12. [Références](#12-références)
 
 ---
 
@@ -58,7 +80,7 @@ restitution des faits croisée avec *qui affirme quoi*.
 Un **chat juridique** :
 
 1. l'avocat dépose **un PDF propre** (ou un fichier `.txt`) d'arrêt (Légifrance ou Judilibre) ;
-2. LawHack analyse l'arrêt en coulisse et construit un **registre d'attribution** interne ;
+2. Legible analyse l'arrêt en coulisse et construit un **registre d'attribution** interne ;
 3. l'avocat pose des questions libres ;
 4. chaque réponse **cite sa source** (« §8, Réponse de la Cour »), distingue les voix
    (« la Cour décide », « la cour d'appel avait retenu », « le demandeur soutient ») et
@@ -68,7 +90,7 @@ Principes produit :
 
 - **Un seul arrêt par session** en V1.
 - Réponses **fondées uniquement sur le PDF** (pas de connaissances générales du LLM présentées comme issues de l'arrêt).
-- **Ne jamais promettre « zéro erreur »** : la promesse est « beaucoup moins d'erreurs, mesurées, et quand LawHack doute, il le dit ».
+- **Ne jamais promettre « zéro erreur »** : la promesse est « beaucoup moins d'erreurs, mesurées, et quand Legible doute, il le dit ».
 - La vue complète de l'arrêt coloré par locuteur est **hors V1** (option future).
 
 ## 3. Format de présentation (UX AI native)
@@ -95,8 +117,8 @@ La vue disparaît ensuite au profit du chat.
 
 ### 3.3 Mode démo : écran partagé
 
-Même question piège posée à **Astra seul** et à **LawHack**. Bouton « Vérifier » : la réponse
-d'Astra passe dans le vérificateur LawHack, la phrase mal attribuée devient rouge
+Même question piège posée à **Astra seul** et à **Legible**. Bouton « Vérifier » : la réponse
+d'Astra passe dans le vérificateur Legible, la phrase mal attribuée devient rouge
 (« attribué à la Cour — en réalité le demandeur, §3 »).
 
 Hors périmètre : graphiques de probabilités détaillés, vue d'annotation complète.
@@ -161,6 +183,19 @@ Codes stables (à utiliser tels quels dans le code et les données) :
 ex. `["COUR_CASSATION", "JURIDICTION_FOND", "DEMANDEUR"]` = la Cour rapporte que la cour
 d'appel a relevé que le demandeur soutenait…
 
+### Rôles et repères d'un arrêt
+
+| Rôle | Code | Où il parle |
+|---|---|---|
+| Cour d'appel (2nd degré) | `JURIDICTION_FOND` | Rapportée dans l'exposé, le moyen et la réponse (« l'arrêt retient », « la cour d'appel a relevé ») |
+| Cour de cassation (juge du droit, pas des faits) | `COUR_CASSATION` | « Réponse de la Cour », « Par ces motifs, la Cour : » |
+| Demandeur (conteste l'arrêt d'appel) | `DEMANDEUR` | « Énoncé du moyen », moyen annexé |
+| Défendeur | `DEFENDEUR` | Fins de non-recevoir, pourvoi incident |
+
+Plan type d'un arrêt : informations générales → parties → faits et procédure → « Énoncé du moyen » → « Réponse de la Cour » → « Par ces motifs, la Cour : ».
+Marqueurs d'approbation (la Cour valide la cour d'appel → statut `DECIDE`) : « a retenu à bon droit », « en a exactement déduit », « le moyen n'est donc pas fondé ».
+Solutions : `REJET`, `CASSATION`, `CASSATION_PARTIELLE`, `CASSATION_PARTIELLE_SANS_RENVOI`, `CASSATION_SANS_RENVOI` (détectées dans `lawhack/solution.py`).
+
 Exemple d'entrée du registre :
 
 ```json
@@ -202,7 +237,7 @@ probabilité par option et une confiance. Endpoint : `POST /v1/systemone`.
 
 ### Pièges connus (doc « Jev 1.13 jaggedness ») et parades
 
-| Piège | Parade dans LawHack |
+| Piège | Parade dans Legible |
 |---|---|
 | Une option est toujours choisie (probas somment à 1) | Toujours inclure `INDETERMINE` ; ajouter un `noul` « l'arrêt contient-il la réponse ? » |
 | Biais vers la première option | Si confiance < 0,8, reposer la question avec options mélangées et comparer |
@@ -287,17 +322,17 @@ Cette commande prépare les données ; le fine-tuning Mistral n'est pas exécut�
 |---|---|
 | **Smoke test** | 31 phrases annotées à la main sur 2 arrêts (`scripts/eval_attribution.py`) ; test de régression uniquement, pas un résultat de performance. |
 | **Zonage à grande échelle** | Échantillon Judilibre [`antoinejeannot/jurisprudence`](https://huggingface.co/datasets/antoinejeannot/jurisprudence), configuration `cour_de_cassation` : 277 arrêts. Split dev/test déterministe par SHA-256 de l'identifiant (147 arrêts test). Référence : zones officielles Judilibre, avec `annexes` rattaché à `moyens`. IC95 % par bootstrap au niveau de l'arrêt. Commande : `python scripts/eval_zones.py --split test [--client jev|heuristic] [--limit N]`. |
-| **Questions QA pièges** | Cinq familles : `piege_moyen`, `piege_fond`, `decision`, `allegue`, `hors_arret`. LawHack (registre d'attribution + vérification Jev) est comparé à Mistral seul, avec le texte intégral et le même modèle de rédaction (`mistral-medium`). Un juge `mistral-large`, à l'aveugle sur le système, voit le texte intégral de l'arrêt et la référence ; il applique la typologie de Magesh et al. (2024) : `correct`, `incomplete`, `misgrounded`, `incorrect`. Comparaison appariée : McNemar exact et IC bootstrap du différentiel ; IC Wilson pour les taux. Commande : `python scripts/eval_qa.py [--questions FILE] [--concurrency N]`. Les questions sont générées par `mistral-large` à partir du zonage officiel (`scripts/make_questions.py`), puis filtrées par relecture `mistral-large` (`scripts/review_questions.py`) ; seules les questions retenues après relecture sont conservées. |
+| **Questions QA pièges** | Cinq familles : `piege_moyen`, `piege_fond`, `decision`, `allegue`, `hors_arret`. Legible (registre d'attribution + vérification Jev) est comparé à Mistral seul, avec le texte intégral et le même modèle de rédaction (`mistral-medium`). Un juge `mistral-large`, à l'aveugle sur le système, voit le texte intégral de l'arrêt et la référence ; il applique la typologie de Magesh et al. (2024) : `correct`, `incomplete`, `misgrounded`, `incorrect`. Comparaison appariée : McNemar exact et IC bootstrap du différentiel ; IC Wilson pour les taux. Commande : `python scripts/eval_qa.py [--questions FILE] [--concurrency N]`. Les questions sont générées par `mistral-large` à partir du zonage officiel (`scripts/make_questions.py`), puis filtrées par relecture `mistral-large` (`scripts/review_questions.py`) ; seules les questions retenues après relecture sont conservées. |
 
-**Efficacité.** Cache disque versionné par le code LawHack : une relance réutilise les résultats (0 appel) et une exécution interrompue peut reprendre. Le débit Jev est plafonné par `EVAL_JEV_RPM` (25/min par défaut), sous la limite de 60/min de la clé partagée.
+**Efficacité.** Cache disque versionné par le code Legible : une relance réutilise les résultats (0 appel) et une exécution interrompue peut reprendre. Le débit Jev est plafonné par `EVAL_JEV_RPM` (25/min par défaut), sous la limite de 60/min de la clé partagée.
 
 **Résultats (18 arrêts Judilibre, 62 questions, `bench/`)**
 
-LawHack (Jev + Mistral) contre Mistral seul, avec le même modèle de rédaction (`mistral-medium-latest`).
+Legible (Jev + Mistral) contre Mistral seul, avec le même modèle de rédaction (`mistral-medium-latest`).
 
 | | Phrases fausses ou mal attribuées | « La Cour a-t-elle constaté… ? » (fait de la cour d'appel) | Argument d'une partie présenté comme décision | Solution | Hors sujet (abstention) |
 |---|---|---|---|---|---|
-| **LawHack** | **1/53** (+2 incertaines) | **18/18** | 7/8 | 18/18 | 18/18 |
+| **Legible** | **1/53** (+2 incertaines) | **18/18** | 7/8 | 18/18 | 18/18 |
 | Mistral seul | 18/47 | 1/18 | 7/8 | 18/18 | 18/18 |
 
 Méthode de notation :
@@ -306,7 +341,7 @@ Méthode de notation :
 - Commandes : `scripts/judge.py run`, puis `scripts/judge.py score`.
 - `bench/judge_results.json` est la passe d'origine, faite avec une première version du prompt sans les conventions de lecture. Le script contient le prompt actuel, qui les ajoute.
 - Limites : un seul annotateur, et seulement 8 questions « argument d'une partie ».
-- Le vérificateur interne (`scripts/bench.py`, matching lexical) n'est pas fiable pour publier : il comptait 6 erreurs pour LawHack, toutes fausses, et ratait la vraie.
+- Le vérificateur interne (`scripts/bench.py`, matching lexical) n'est pas fiable pour publier : il comptait 6 erreurs pour Legible, toutes fausses, et ratait la vraie.
 
 ### Résultats — benchmark Légifrance 25 arrêts
 
@@ -316,10 +351,10 @@ Corpus : 25 arrêts récents de 6 chambres (civ. 1/2/3, com., soc., crim.) couvr
 
 | | Score global (0–1) | Réponses avec erreur d'attribution | « La Cour a-t-elle constaté… ? » | Thèse du demandeur ou du juge du fond présentée comme décision | Solution | Hors sujet (abstention) |
 |---|---|---|---|---|---|---|
-| **LawHack** | **0,86–0,87** | **11/224** | **47/50** | 27/50 | 49/50 | 45/50 |
+| **Legible** | **0,86–0,87** | **11/224** | **47/50** | 27/50 | 49/50 | 45/50 |
 | Mistral seul | 0,76 | 44/224 | 0/50 | **39/50** | 49/50 | **49/50** |
 
-| Indicateur | LawHack | Mistral seul |
+| Indicateur | Legible | Mistral seul |
 |---|---|---|
 | Score global (texte brut / PDF) | **0,87 / 0,86** | 0,76 / 0,76 |
 | Réponses entièrement correctes | **182/224** | 159/224 |
@@ -330,7 +365,7 @@ Corpus : 25 arrêts récents de 6 chambres (civ. 1/2/3, com., soc., crim.) couvr
 | Lecture Système 1 | ingestion PDF ≥ 0,986 · zonage 98,5 % · locuteurs 259/259 · solution 24/25 (bug « REJETTE le recours ») | — (pas de registre) |
 | Écart apparié (IC 95 % bootstrap) | +0,11 [+0,02 ; +0,20] texte · +0,10 [+0,01 ; +0,19] PDF | référence |
 
-| Faiblesse mesurée de LawHack | Cas |
+| Faiblesse mesurée de Legible | Cas |
 |---|---|
 | Pas de contrôle de **polarité** : moyen rejeté ou raisonnement censuré repris comme « la Cour juge » | 7 |
 | Abstention à tort sur ces mêmes pièges | 4 |
@@ -359,10 +394,10 @@ Le zonage est déterministe ; Jev ne tranche que les segments ambigus (≈ 4 %).
 
 Le jeu QA ci-dessous est le **jeu de développement** (46 questions, 12 arrêts) ayant servi au réglage ; ce n'est pas le résultat final. Les IC par système sont des IC95 % Wilson ; les différences appariées utilisent le bootstrap indiqué.
 
-| QA — dev | LawHack | Mistral seul | Comparaison appariée |
+| QA — dev | Legible | Mistral seul | Comparaison appariée |
 |---|---:|---:|---:|
 | Hallucination d'attribution, questions répondables | 2 / 34 · 6 % [1,6–19,1] | 8 / 34 · 24 % [12,4–40,0] | McNemar exact p = 0,031 |
-| Hallucination globale (`misgrounded` + `incorrect`) | — | — | Différence LawHack − baseline : −15,2 points [−25,0 ; −5,0], p = 0,016 |
+| Hallucination globale (`misgrounded` + `incorrect`) | — | — | Différence Legible − baseline : −15,2 points [−25,0 ; −5,0], p = 0,016 |
 | Réponse correcte | 41 / 46 · 89 % [77,0–95,3] | 37 / 46 · 80 % [66,8–89,3] | McNemar p = 0,29 |
 | Abstention correcte, hors arrêt | 12 / 12 · 100 % [75,8–100] | 11 / 12 · 92 % [64,6–98,5] | — |
 | Abstention à tort | 5 / 34 · 15 % [6,4–30,1] | 0 / 34 · 0 % [0–10,2] | — |
@@ -370,7 +405,7 @@ Le jeu QA ci-dessous est le **jeu de développement** (46 questions, 12 arrêts)
 
 Jeu **held-out** : 102 questions (150 générées, 102 retenues après relecture) sur 30 arrêts test jamais utilisés pendant le réglage, code figé. C'est le résultat à citer.
 
-| QA — held-out | LawHack | Mistral seul | Comparaison appariée |
+| QA — held-out | Legible | Mistral seul | Comparaison appariée |
 |---|---:|---:|---:|
 | Hallucination d'attribution, questions répondables | 16 / 73 · 22 % | 19 / 72 · 26 % | McNemar p = 0,66 (b = 9, c = 12) |
 | Hallucination globale | 19 / 102 · 19 % | 23 / 101 · 23 % | −4,0 points [−14,7 ; +6,1], p = 0,54 |
@@ -379,7 +414,7 @@ Jeu **held-out** : 102 questions (150 générées, 102 retenues après relecture
 | Abstention à tort | 17 / 73 · 23 % | 6 / 72 · 8 % | — |
 | Invention | 3 / 102 · 3 % | 3 / 101 · 3 % | — |
 
-Lecture honnête : sur le held-out, l'écart d'hallucination d'attribution va dans le bon sens mais **n'est pas significatif**, et LawHack s'abstient trop souvent à tort. L'écart observé sur le jeu de dev (6 % vs 24 %) était en partie dû au réglage. Ces chiffres QA ont été mesurés sur le code de la branche evals (`33891dc`), avant sa fusion avec les évolutions de `answer.py` sur main (récupération lexicale, questions à fausse prémisse) : à remesurer sur main avec `python scripts/eval_qa.py --questions eval/questions_heldout.jsonl`. Une revue des erreurs montre aussi des verdicts du juge discutables (approbation de la cour d'appel par la Cour comptée comme erreur) : la validation humaine du juge est prioritaire. 1 réponse baseline manquante (erreur API 429).
+Lecture honnête : sur le held-out, l'écart d'hallucination d'attribution va dans le bon sens mais **n'est pas significatif**, et Legible s'abstient trop souvent à tort. L'écart observé sur le jeu de dev (6 % vs 24 %) était en partie dû au réglage. Ces chiffres QA ont été mesurés sur le code de la branche evals (`33891dc`), avant sa fusion avec les évolutions de `answer.py` sur main (récupération lexicale, questions à fausse prémisse) : à remesurer sur main avec `python scripts/eval_qa.py --questions eval/questions_heldout.jsonl`. Une revue des erreurs montre aussi des verdicts du juge discutables (approbation de la cour d'appel par la Cour comptée comme erreur) : la validation humaine du juge est prioritaire. 1 réponse baseline manquante (erreur API 429).
 
 ### Limites
 
@@ -466,71 +501,12 @@ Le registre est mis en cache dans `data/cache/<doc_id>.json` (`--no-cache` pour 
 1. Le problème en une phrase + un exemple réel d'erreur d'attribution.
 2. Dépôt du PDF d'un arrêt → animation de lecture (vitesse, coût).
 3. Question piège en écran partagé : Astra attribue à la Cour l'argument du demandeur ;
-   LawHack répond juste, avec pastilles et §.
+   Legible répond juste, avec pastilles et §.
 4. Bouton « Vérifier » sur la réponse d'Astra → phrase en rouge.
-5. Un « je ne sais pas » honnête de LawHack face à une invention d'Astra.
-6. Le chiffre du benchmark : taux d'hallucination d'attribution Astra vs LawHack, coût, latence.
+5. Un « je ne sais pas » honnête de Legible face à une invention d'Astra.
+6. Le chiffre du benchmark : taux d'hallucination d'attribution Astra vs Legible, coût, latence.
 
-## 12. Feuille de route
-
-**Hackathon (6–7 h)**
-
-1. Squelette repo, schémas, ingestion PDF, zonage par règles.
-2. Client Système 1 (Jev / Codiv) + attribution → registre.
-3. Réponse Mistral citée + politique d'honnêteté.
-4. UI chat avec pastilles ; écran partagé Astra.
-5. Benchmark sur un échantillon d'arrêts + chiffres pour le pitch.
-
-**Après**
-
-- Vérificateur générique de textes rédigés par humain / Harvey / Astra.
-- Serveur MCP branchable sur Le Chat, Claude, Legora, Harvey.
-- Plusieurs arrêts par session ; dossiers longs non balisés (assignations, conclusions, pièces).
-- Restitution des faits : chronologie acteur · action · date · source · statut · confiance.
-- Hébergement UE (ex. eu/jev) pour la confidentialité des dossiers.
-
-## 13. Organisation de l'équipe (3 personnes)
-
-Chaque personne possède ses dossiers ; le contrat entre elles est le format du registre (`lawhack/schema.py`), figé tôt.
-
-| Rôle | Périmètre | Dossiers |
-|---|---|---|
-| **1 · Système 1 & registre** | Zonage robuste (20 arrêts variés), segmentation, prompts Jev EN vs FR, calibration des seuils, bascule Jev ↔ OpenJev | `lawhack/zoning.py`, `segmenter.py`, `attributor.py`, `system_one.py` |
-| **2 · Système 2 & produit** | Récupération, réponse Mistral citée `[S-xx]`, vérification Jev + abstention, chat, pastilles, animation | `lawhack/answer.py`, `verify.py`, `app/` |
-| **3 · Juriste : données, benchmark, pitch** | Annotation avec la grille de rôles, questions pièges + réponses attendues, benchmark Astra vs LawHack, choix du cas réel, pitch | `eval/`, `data/` |
-
-Synchronisations : (1) schéma du registre figé ; (2) test de bout en bout à mi-parcours sur le PDF de démo ; (3) gel du code 1 h avant la fin (corrections, répétition, chiffres).
-
-### Grille de rôles (fournie par l'équipe)
-
-| Rôle | Code | Où il parle |
-|---|---|---|
-| Cour d'appel (2nd degré) | `JURIDICTION_FOND` | Rapportée dans l'exposé, le moyen et la réponse (« l'arrêt retient », « la cour d'appel a relevé ») |
-| Cour de cassation (juge du droit, pas des faits) | `COUR_CASSATION` | « Réponse de la Cour », « Par ces motifs, la Cour : » |
-| Demandeur (conteste l'arrêt d'appel) | `DEMANDEUR` | « Énoncé du moyen », moyen annexé |
-| Défendeur | `DEFENDEUR` | Fins de non-recevoir, pourvoi incident |
-
-Plan type d'un arrêt : informations générales → parties → faits et procédure → « Énoncé du moyen » → « Réponse de la Cour » → « Par ces motifs, la Cour : ».
-Marqueurs d'approbation (la Cour valide la cour d'appel → statut `DECIDE`) : « a retenu à bon droit », « en a exactement déduit », « le moyen n'est donc pas fondé ».
-Solutions : `REJET`, `CASSATION`, `CASSATION_PARTIELLE`, `CASSATION_PARTIELLE_SANS_RENVOI`, `CASSATION_SANS_RENVOI` (détectées dans `lawhack/solution.py`).
-
-## 14. Consignes pour les agents de code
-
-Ce README est la **source de vérité** du produit. Avant de coder :
-
-- **Respecter le pipeline du §4** et la séparation : règles/code → Jev (décisions typées) → Mistral (rédaction).
-- **Ne pas demander à Jev de générer du texte** ni du JSON libre ; uniquement `noul` / `choice` / `score`.
-- **Toujours propager** probabilités et confiance jusqu'à la réponse finale (pastilles).
-- **Toujours inclure `INDETERMINE`** dans les choix de locuteur.
-- Utiliser les **codes de l'ontologie du §5** tels quels ; ne pas en inventer sans mettre à jour ce README.
-- Chaque affirmation de la réponse doit pointer vers un segment `S-xx` existant ; sinon, abstention.
-- Le jeu labellisé ne sert **qu'à l'évaluation** ; ne jamais l'injecter dans les prompts.
-- Aucune clé dans le code ou les commits ; lire la configuration depuis l'environnement.
-- Passer par l'abstraction `SystemOneClient` pour pouvoir basculer Jev ↔ OpenJev.
-- Ne pas promettre « zéro erreur » dans l'UI ou la documentation.
-- Petites PR focalisées, avec tests (`pytest`) sur zonage, segmentation et politique d'honnêteté.
-
-## 15. Références
+## 12. Références
 
 - TypeSafe — [Introducing System One models and Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) · [Documentation](https://docs.typesafe.ai) · [Jev 1.13 jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
 - Cookbooks TypeSafe utiles : [Double-checking citations](https://docs.typesafe.ai/cookbooks/citation_check), [Line-by-line search](https://docs.typesafe.ai/cookbooks/semantic_find), [Re-ranking (CLERC legal)](https://docs.typesafe.ai/cookbooks/rerank_typesafe), [Confidence-gated routing](https://docs.typesafe.ai/patterns/confidence-routing)
